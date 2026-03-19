@@ -613,3 +613,154 @@ def run_analysis_and_design_table(joints_file, members_file):
     compression_table = pd.DataFrame(compression_results)
 
     return tension_table, compression_table
+
+def restrained_beam(M, V):
+    import openpyxl
+    import numpy as np
+
+    grades = openpyxl.load_workbook("grades.xlsx").active
+
+    # ---- Get fy ----
+    for i in range(2, 10):
+        if grades.cell(row=i, column=1).value == grade:
+            fy = float(grades.cell(row=i, column=2).value)
+            break
+
+    gamma_M0 = 1.0
+
+    ex = openpyxl.load_workbook("UB-2.xlsx").active
+
+    i = 1
+
+    while True:
+        i += 1
+
+        size = ex.cell(row=i, column=1).value
+
+        if size is None:
+            raise ValueError("No suitable section found in UB table.")
+
+        Wyy = float(ex.cell(row=i, column=8).value) * 1000  # mm³
+        Wzz = float(ex.cell(row=i, column=9).value) * 1000
+        if Wyy > Wzz:
+            axis = "y"
+        else:
+            axis = "z"
+        Wpl = max(Wyy, Wzz)
+        tw = float(ex.cell(row=i, column=15).value)           # web thickness
+        h = float(ex.cell(row=i, column=16).value)            # depth
+        tf = float(ex.cell(row=i, column=17).value)
+        hw = h - 2 * tf
+        Av = hw * tw  # mm²
+
+        Aw = hw * tw
+
+        # ---- SHEAR CHECK ----
+        Vpl_Rd = (Av * fy) / (np.sqrt(3) * gamma_M0) / 1000  # kN
+
+        if V > Vpl_Rd:
+            continue  # FAIL
+
+        # ---- MOMENT CAPACITY ----
+        Mpl_Rd = (Wpl * fy) / gamma_M0 / 1e6  # kNm
+
+        if V / Vpl_Rd <= 0.5:
+            M_Rd = Mpl_Rd
+
+        else:
+            rho = (2 * V / Vpl_Rd - 1) ** 2
+
+            M_Rd = (
+                (Wpl - (rho * Aw**2) / (4 * tw)) * fy / gamma_M0
+            ) / 1e6  # kNm
+
+        # ---- FINAL CHECK ----
+        if M <= M_Rd:
+            return {
+                "Type": "Restrained Beam",
+                "Size": size,
+                "M_Rd (kNm)": round(M_Rd, 2),
+                "V_Rd (kN)": round(Vpl_Rd, 2),
+                "Utilization (%)": round((M / M_Rd) * 100, 2)
+            }
+
+def unrestrained_beam(M, V, L):
+    import openpyxl
+    import numpy as np
+
+    grades = openpyxl.load_workbook("grades.xlsx").active
+
+    for i in range(2, 10):
+        if grades.cell(row=i, column=1).value == grade:
+            fy = float(grades.cell(row=i, column=2).value)
+            break
+    if 'fy' not in locals():
+        raise ValueError("Steel grade not found in grades.xlsx")
+
+    E = 210000
+    gamma = 1.0
+
+    ex = openpyxl.load_workbook("UB-2.xlsx").active
+
+    i = 1
+
+    while True:
+        i += 1
+
+        size = ex.cell(row=i, column=1).value
+
+        if size is None:
+            raise ValueError("No suitable section found in UB table.")
+
+        Wyy = float(ex.cell(row=i, column=8).value) * 1000  # mm³
+        Wzz = float(ex.cell(row=i, column=9).value) * 1000
+        if Wyy > Wzz:
+            axis = "y"
+        else:
+            axis = "z"
+        Wpl = max(Wyy, Wzz)
+        if axis == "y":
+            I = float(ex.cell(row=i, column=2).value)*10000
+        else:
+            I = float(ex.cell(row=i, column=3).value)*10000
+        tw = float(ex.cell(row=i, column=15).value)  # web thickness
+        h = float(ex.cell(row=i, column=16).value)  # depth
+        tf = float(ex.cell(row=i, column=17).value)
+        hw = h - 2 * tf
+        Av = hw * tw  # mm²
+
+        Aw = hw * tw
+
+        # ---- SHEAR ----
+        Vpl_Rd = (Av * fy) / (np.sqrt(3) * gamma) / 1000
+
+        if V > Vpl_Rd:
+            continue
+
+        # ---- SHEAR REDUCTION ----
+        if V / Vpl_Rd <= 0.5:
+            W_eff = Wpl
+        else:
+            rho = (2 * V / Vpl_Rd - 1) ** 2
+            W_eff = max(Wpl - (rho * Aw**2) / (4 * tw), 0.1 * Wpl)
+
+        # ---- LTB ----
+        Mcr = (np.pi**2 * E * I) / (L**2)
+
+        lam = np.sqrt((W_eff * fy) / Mcr)
+
+        alpha = 0.34
+        phi = 0.5 * (1 + alpha * (lam - 0.2) + lam**2)
+        chi = 1 / (phi + np.sqrt(max(phi**2 - lam**2, 0)))
+
+        gamma_M1 = 1.0
+        Mb_Rd = chi * W_eff * fy / gamma_M1 / 1e6
+
+        if M <= Mb_Rd:
+            return {
+                "Type": "Unrestrained Beam",
+                "Size": size,
+                "χ_LT": round(chi, 3),
+                "Mb_Rd (kNm)": round(Mb_Rd, 2),
+                "Utilization (%)": round((M / Mb_Rd) * 100, 2)
+            }
