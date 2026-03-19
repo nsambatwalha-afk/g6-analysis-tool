@@ -4,35 +4,40 @@ import pandas as pd
 import libfunc
 import truss_analysis
 
-def steel_input_ui():
-    st.subheader("Steel Properties")
+def steel_input_ui(val=False):
+    if not val:
+        st.subheader("Steel Properties")
 
-    truss_analysis.grade = st.selectbox("Steel Grade", ["S235", "S275", "S355", "S420", "S450", "S460"])
+        truss_analysis.grade = st.selectbox("Steel Grade", ["S235", "S275", "S355", "S420", "S450", "S460"])
 
-    truss_analysis.shapeten = st.selectbox("Tension Member Shape", ["Angle", "CHS"])
+        truss_analysis.shapeten = st.selectbox("Tension Member Shape", ["Angle", "CHS"])
 
-    truss_analysis.shapecomp = st.selectbox("Compression Member Shape", ["UB", "UC", "CHS", "Angle"])
+        truss_analysis.shapecomp = st.selectbox("Compression Member Shape", ["UB", "UC", "CHS", "Angle"])
 
-    truss_analysis.jointing = st.selectbox("Joint Type", ["bolt", "weld"])
+        truss_analysis.jointing = st.selectbox("Joint Type", ["bolt", "weld"])
 
-    if truss_analysis.jointing == "bolt":
-        truss_analysis.nh = st.number_input("Number of bolt holes", value=2.0)
-        truss_analysis.d = st.number_input("Bolt diameter (mm)", value=20.0)
+        if truss_analysis.jointing == "bolt":
+            truss_analysis.nh = st.number_input("Number of bolt holes", value=2.0)
+            truss_analysis.d = st.number_input("Bolt diameter (mm)", value=20.0)
 
-        truss_analysis.staggered = st.checkbox("Staggered bolts?")
+            truss_analysis.stag = st.checkbox("Staggered bolts?")
 
-        if truss_analysis.staggered:
-            truss_analysis.s = st.number_input("Stagger spacing s (mm)", value=50.0)
-            truss_analysis.p = st.number_input("Pitch p (mm)", value=100.0)
-            truss_analysis.ngs = st.number_input("Number of stagger lines", value=1.0)
+            if truss_analysis.stag:
+                truss_analysis.s = st.number_input("Stagger spacing s (mm)", value=50.0)
+                truss_analysis.p = st.number_input("Pitch p (mm)", value=100.0)
+                truss_analysis.ngs = st.number_input("Number of stagger lines", value=1.0)
+            else:
+                truss_analysis.s, truss_analysis.p, truss_analysis.ngs = 0, 0, 0
+
         else:
-            truss_analysis.s, truss_analysis.p, truss_analysis.ngs = 0, 0, 0
+            truss_analysis.nh = truss_analysis.d = truss_analysis.s = truss_analysis.p = truss_analysis.ngs = 0
+            truss_analysis.stag = False
 
+        return
     else:
-        truss_analysis.nh = truss_analysis.d = truss_analysis.s = truss_analysis.p = truss_analysis.ngs = 0
-        truss_analysis.staggered = False
+        st.subheader("Steel Properties")
+        truss_analysis.grade = st.selectbox("Steel Grade", ["S235", "S275", "S355", "S420", "S450", "S460"])
 
-    return
 
 st.set_page_config(page_title="Structural Engineering Toolkit", layout="wide")
 
@@ -45,7 +50,8 @@ task = st.sidebar.radio(
         "Matrix Multiplication",
         "Gauss-Jordan Elimination",
         "Truss Analysis & Design",
-        "Single Member Design"
+        "Single Member Design",
+        "Beam Design"
     )
 )
 
@@ -292,3 +298,35 @@ elif task == "Single Member Design":
         except Exception as e:
 
             st.error(f"Design error: {e}")
+
+elif task == "Beam Design":
+
+    st.header("Beam Design")
+
+    steel_input_ui(True)
+
+    st.write("---")
+
+    M = st.number_input("Bending Moment (kNm)", value=100.0)
+    V = st.number_input("Shear Force (kN)", value=50.0)
+    L = st.number_input("Beam Length (mm)", value=6000.0)
+
+    beam_type = st.selectbox(
+        "Beam Type",
+        ["Restrained", "Unrestrained"]
+    )
+
+    if st.button("Design Beam"):
+
+        try:
+            if beam_type == "Restrained":
+                result = truss_analysis.restrained_beam(M, V)
+
+            else:
+                result = truss_analysis.unrestrained_beam(M, V, L)
+
+            st.success("Design Result")
+            st.dataframe(pd.DataFrame([result]))
+
+        except Exception as e:
+            st.error(f"Error: {e}")
