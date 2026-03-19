@@ -505,8 +505,18 @@ def design_single_member(force, member_type, length=1000):
     length: mm (only needed for compression)
     """
 
-    # Assume properties already set before calling this function
-
+    set_steel_properties(
+    grade_in="S355",
+    shapeten_in="Angle",
+    shapecomp_in="UB",
+    jointing_in="bolt",
+    nh_in=2,
+    d_in=20,
+    staggered=True,
+    s_in=50,
+    p_in=100,
+    ngs_in=1
+)
     f = abs(force) * 1000  # convert to N
 
     if member_type == "Tension":
@@ -567,7 +577,18 @@ def run_analysis_and_design_table(joints_file, members_file, steel_file):
     member_forces = calculate_member_forces(NSC, D)
 
     # ---- Steel data ----
-    # inputxl_steel(steel_file)
+    set_steel_properties(
+    grade_in="S355",
+    shapeten_in="Angle",
+    shapecomp_in="UB",
+    jointing_in="bolt",
+    nh_in=2,
+    d_in=20,
+    staggered=True,
+    s_in=50,
+    p_in=100,
+    ngs_in=1
+)
 
     # ---- Design containers ----
     tension_results = []
