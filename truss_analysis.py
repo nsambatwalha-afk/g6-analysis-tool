@@ -84,39 +84,44 @@ def inputxl(joints_file, members_file):
     JP = np.array(jp)
     PJ = np.array(pj)
 
-def inputxl_steel(steel_file):
-    global grade, shapecomp, shapeten, jointing, stag, nh, d, s, p, ngs
+def set_steel_properties(
+    grade_in,
+    shapeten_in,
+    shapecomp_in,
+    jointing_in,
+    nh_in=0,
+    d_in=0,
+    staggered=False,
+    s_in=0,
+    p_in=0,
+    ngs_in=0
+):
+    global grade, shapeten, shapecomp, jointing
+    global stag, nh, d, s, p, ngs
 
-    if steel_file is None:
-        raise ValueError("Steel_entry.xlsx file missing.")
-
-    try:
-        data = openpyxl.load_workbook(steel_file).active
-    except Exception as e:
-        raise ValueError(f"Error reading Steel_entry.xlsx: {e}")
-
-    grade = data.cell(row=3, column=2).value
-    shapeten = data.cell(row=4, column=2).value
-    shapecomp = data.cell(row=6, column=2).value
-    jointing = data.cell(row=5, column=2).value
+    grade = grade_in
+    shapeten = shapeten_in
+    shapecomp = shapecomp_in
+    jointing = jointing_in
 
     if jointing == "bolt":
-        stag1 = int(data.cell(row=10, column=2).value)
+        stag = staggered
+        nh = nh_in
+        d = d_in
 
-        if stag1 == 1:
-            stag = True
-            s = float(data.cell(row=15, column=2).value)
-            p = float(data.cell(row=16, column=2).value)
-            ngs = float(data.cell(row=17, column=2).value)
-
-        elif stag1 == 0:
-            stag = False
-
+        if stag:
+            s = s_in
+            p = p_in
+            ngs = ngs_in
         else:
-            raise ValueError("Invalid stagger input in Steel_entry.xlsx")
+            s, p, ngs = 0, 0, 0
 
-        nh = float(data.cell(row=11, column=2).value)
-        d = float(data.cell(row=12, column=2).value)
+    elif jointing == "weld":
+        stag = False
+        nh, d, s, p, ngs = 0, 0, 0, 0, 0
+
+    else:
+        raise ValueError("Jointing must be 'bolt' or 'weld'")
 
 
 def table_reader(table, val):
@@ -500,7 +505,7 @@ def design_single_member(force, member_type, length=1000):
     length: mm (only needed for compression)
     """
 
-    inputxl_steel()
+    # Assume properties already set before calling this function
 
     f = abs(force) * 1000  # convert to N
 
@@ -562,7 +567,7 @@ def run_analysis_and_design_table(joints_file, members_file, steel_file):
     member_forces = calculate_member_forces(NSC, D)
 
     # ---- Steel data ----
-    inputxl_steel(steel_file)
+    # inputxl_steel(steel_file)
 
     # ---- Design containers ----
     tension_results = []
