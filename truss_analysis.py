@@ -21,6 +21,8 @@ d = 0.0
 s = 0.0
 p = 0.0
 ngs = 0.0
+condition = ""
+endcondition = ""
 
 
 def inputxl(joints_file, members_file):
@@ -685,6 +687,7 @@ def restrained_beam(M, V):
             }
 
 def unrestrained_beam(M, V, L):
+    global condition, endcondition
     import openpyxl
     import numpy as np
 
@@ -720,84 +723,110 @@ def unrestrained_beam(M, V, L):
         Wyy = float(ex.cell(row=i, column=8).value) * 1000  # mm³
         Wpl = Wyy  # Use major axis only
 
-        I = float(ex.cell(row=i, column=2).value) * 10000  # mm⁴
+        Iy = float(ex.cell(row=i, column=2).value) * 10000  # mm⁴
+        Iz = float(ex.cell(row=i, column=3).value) * 10000
+        I = Iy
 
         tw = float(ex.cell(row=i, column=15).value)
         h = float(ex.cell(row=i, column=16).value)
         tf = float(ex.cell(row=i, column=17).value)
+        b = float(ex.cell(row=i, column=19).value)
+        iz = float(ex.cell(row=i, column=5).value)
+        if endcondition=="Free":
+            k = 1.0
+        elif endcondition=="Partial":
+            k = 0.85
+        elif endcondition=="Full":
+            k = 0.7
+        elif endcondition=="Cantilever":
+            k = 2.0
+        else:
+            raise ValueError("Endcondition not recognized.")
+        lamz = (k*L)/iz
+        laml = np.pi * np.sqrt(E/fy)
+        lamzba = lamz / laml
+        c1 = 1.0
+        u = 0.9
+        vee = 1.0
+        bew = 1.0
+        lamltb = (1/np.sqrt(c1))*u*vee*lamzba*np.sqrt(bew)
+        hoverb = h/b
+        if condition == "Rolled":
+            if hoverb <= 2:
+                alt = 0.34
+            else:
+                alt = 0.49
+            phi = 0.5 * (1 + alt*(lamltb - 0.4) + 0.75*(lamltb**2))
+            chi = min(1 / (phi + np.sqrt(phi**2 - 0.75*(lamltb**2))),1.0,1/(lamltb**2))
+        else:
+            if hoverb <= 2 and condition == "Welded":
+                alt = 0.49
+            elif hoverb > 2 and condition == "Welded":
+                alt = 0.76
+            else:
+                alt = 0.76
+            phi = 0.5 * (1 + alt*(lamltb - 0.2) + (lamltb**2))
+            chi = min(1 / (phi + np.sqrt(phi**2 - (lamltb**2))),1.0)
+        Mbrd = chi * Wpl * (fy/gamma_M1)
 
         hw = h - 2 * tf
         Av = hw * tw  # shear area (mm²)
         Aw = hw * tw  # web area for reduction
 
         # ---- SHEAR CHECK ----
-        Vpl_Rd = (Av * fy) / (np.sqrt(3) * gamma_M1) / 1000  # kN
+        Vpl_Rd = (Av * fy) / (np.sqrt(3) * gamma_M1) / 1000  # kN (Note: V is in kN)
 
         if V > Vpl_Rd:
             continue  # reject section
 
-        # ---- SHEAR REDUCTION ----
-        if V / Vpl_Rd <= 0.5:
-            W_eff = Wpl
+        # ---- HIGH SHEAR REDUCTION ----
+        # If V is more than 50% of Vpl_Rd, reduce the moment capacity
+        if V > 0.5 * Vpl_Rd:
+            rho = ((2 * V / Vpl_Rd) - 1) ** 2
+            # Reduced plastic modulus (Wpl_reduced)
+            # Subtract the 'lost' capacity of the web area
+            # Formula: M_y,V,Rd = (Wpl - (rho * Aw^2 / 4tw)) * fy / gamma_M0
+            W_reduced = Wpl - (rho * (Aw ** 2)) / (4 * tw)
         else:
-            rho = (2 * V / Vpl_Rd - 1) ** 2
-            W_eff = max(Wpl - (rho * Aw**2) / (4 * tw), 0.1 * Wpl)
+            W_reduced = Wpl
 
-        # ---- LTB (improved approximation) ----
-        Mcr = 2.5 * (np.pi**2 * E * I) / (L**2)
+        # ---- UPDATED DESIGN MOMENT ----
+        # Use W_reduced instead of Wpl in your Mbrd calculation
+        # Note: Divide by 10^6 if W is mm3 and fy is MPa to get kNm
+        Mbrd = (chi * W_reduced * fy / gamma_M1) / 1e6
 
-        lam = np.sqrt((W_eff * fy) / Mcr)
-
-        # Clamp slenderness to avoid numerical collapse
-        lam = min(lam, 2.5)
-
-        alpha = 0.34
-        phi = 0.5 * (1 + alpha * (lam - 0.2) + lam**2)
-
-        chi = 1 / (phi + np.sqrt(max(phi**2 - lam**2, 0)))
-
-        # ---- DESIGN MOMENT ----
-        Mb_Rd = chi * W_eff * fy / gamma_M1 / 1e6  # kNm
-
-        # ---- CHECK ----
-        if M <= Mb_Rd:
+        # ---- FINAL CHECK ----
+        if M <= Mbrd:
             return {
                 "Type": "Unrestrained Beam",
                 "Size": size,
-                "χ_LT": round(chi, 3),
-                "Mb_Rd (kNm)": round(Mb_Rd, 2),
-                "Utilization (%)": round((M / Mb_Rd) * 100, 2)
+                "x_LT": round(chi, 3),
+                "Mb_Rd (kNm)": round(Mbrd, 2),
+                "Vpl_Rd": round(Vpl_Rd, 2),
+                "Utilization (%)": round((M / Mbrd) * 100, 2)
             }
-        # hw = h - 2 * tf
-        # Av = hw * tw  # mm²
-        #
-        # Aw = hw * tw
-        #
-        # # ---- SHEAR ----
-        # Vpl_Rd = (Av * fy) / (np.sqrt(3) * gamma) / 1000
-        #
-        # if V > Vpl_Rd:
-        #     continue
-        #
+
         # # ---- SHEAR REDUCTION ----
         # if V / Vpl_Rd <= 0.5:
-        #     W_eff = Wpl
+        #      W_eff = Wpl
         # else:
-        #     rho = (2 * V / Vpl_Rd - 1) ** 2
-        #     W_eff = max(Wpl - (rho * Aw**2) / (4 * tw), 0.1 * Wpl)
+        #      rho = (2 * V / Vpl_Rd - 1) ** 2
+        #      W_eff = max(Wpl - (rho * Aw**2) / (4 * tw), 0.1 * Wpl)
         #
-        # # ---- LTB ----
-        # Mcr = (np.pi**2 * E * I) / (L**2)
+        # # ---- LTB (improved approximation) ----
+        # Mcr = 2.5 * (np.pi**2 * E * I) / (L**2)
         #
         # lam = np.sqrt((W_eff * fy) / Mcr)
         #
-        # alpha = alt
+        # alpha = 0.34
         # phi = 0.5 * (1 + alpha * (lam - 0.2) + lam**2)
+        #
         # chi = 1 / (phi + np.sqrt(max(phi**2 - lam**2, 0)))
         #
-        # gamma_M1 = 1.0
-        # Mb_Rd = chi * W_eff * fy / gamma_M1 / 1e6
+        # # ---- DESIGN MOMENT ----
+        # Mb_Rd = chi * W_eff * fy / gamma_M1 / 1e6  # kNm
         #
+        # # ---- CHECK ----
         # if M <= Mb_Rd:
         #     return {
         #         "Type": "Unrestrained Beam",

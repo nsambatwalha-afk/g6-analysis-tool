@@ -315,11 +315,15 @@ elif task == "Beam Design":
         "Beam Type",
         ["Restrained", "Unrestrained"]
     )
-    # if beam_type == "Unrestrained":
-    #     condition = st.selectbox(
-    #         "Beam Condition",
-    #         ["Rolled", "Welded"]
-    #     )
+    if beam_type == "Unrestrained":
+        truss_analysis.condition = st.selectbox(
+            "Beam Condition",
+            ["Rolled", "Welded"]
+        )
+        truss_analysis.endcondition = st.selectbox(
+            "Restraint",
+            ["Free","Partial","Full","Cantilever"]
+        )
 
     if st.button("Design Beam"):
 
