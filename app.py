@@ -485,25 +485,42 @@ elif task == "Beam Analysis & Design":
             d[free_dofs] = np.linalg.solve(K[np.ix_(free_dofs, free_dofs)], F_total[free_dofs])
 
         # 6. RECOVER MAX M & V (Corrected)
-        Mmax, Vmax = 0, 0
+        Mmax = 0
+        Vmax = 0
+
         for i in range(n - 1):
-            L = node_positions[i + 1] - node_positions[i]
+            x1, x2 = node_positions[i], node_positions[i + 1]
+            L = (x2 - x1) * 1000  # mm
             idx = [2 * i, 2 * i + 1, 2 * (i + 1), 2 * (i + 1) + 1]
 
-            # Element forces from displacements
-            f_nodal = (EI / L ** 3) * np.array([
+            # 1. Forces from nodal displacements (d)
+            k_local = (EI / L ** 3) * np.array([
                 [12, 6 * L, -12, 6 * L],
                 [6 * L, 4 * L ** 2, -6 * L, 2 * L ** 2],
                 [-12, -6 * L, 12, -6 * L],
                 [6 * L, 2 * L ** 2, -6 * L, 4 * L ** 2]
-            ]) @ d[idx]
+            ])
+            f_disp = k_local @ d[idx]
 
-            # Subtract Fixed End Forces to get internal member forces
-            # V = f_nodal - f_fef (approx)
-            V_start = abs(f_nodal[0])
-            V_end = abs(f_nodal[2])
-            M_start = abs(f_nodal[1])
-            M_end = abs(f_nodal[3])
+            # 2. Subtract the Fixed End Forces for this specific element
+            f_fef = np.zeros(4)
+            for load in loads:
+                if load[0] == "udl":
+                    _, w, a, b = load
+                    # Check if UDL covers this segment
+                    if x1 >= a and x2 <= b:
+                        wN = w  # N/mm
+                        f_fef = np.array([wN * L / 2, wN * L ** 2 / 12, wN * L / 2, -wN * L ** 2 / 12])
+
+            # 3. Total Internal Forces
+            # The internal forces are the displacement forces MINUS the fixed end forces
+            f_internal = f_disp - f_fef
+
+            # Convert back to kN and kNm for comparison
+            V_start = abs(f_internal[0]) / 1000
+            M_start = abs(f_internal[1]) / 1e6
+            V_end = abs(f_internal[2]) / 1000
+            M_end = abs(f_internal[3]) / 1e6
 
             Vmax = max(Vmax, V_start, V_end)
             Mmax = max(Mmax, M_start, M_end)
