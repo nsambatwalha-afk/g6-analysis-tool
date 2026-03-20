@@ -51,7 +51,8 @@ task = st.sidebar.radio(
         "Gauss-Jordan Elimination",
         "Truss Analysis & Design",
         "Single Member Design",
-        "Beam Design"
+        "Simple Beam Design",
+        "Beam Analysis & Design"
     )
 )
 
@@ -299,7 +300,48 @@ elif task == "Single Member Design":
 
             st.error(f"Design error: {e}")
 
-elif task == "Beam Design":
+elif task == "Simple Beam Design":
+
+    st.header("Beam Design")
+
+    steel_input_ui(True)
+
+    st.write("---")
+
+    M = st.number_input("Bending Moment (kNm)", value=100.0)
+    V = st.number_input("Shear Force (kN)", value=50.0)
+    L = st.number_input("Beam Length (mm)", value=1500.0)
+
+    beam_type = st.selectbox(
+        "Beam Type",
+        ["Restrained", "Unrestrained"]
+    )
+    if beam_type == "Unrestrained":
+        truss_analysis.condition = st.selectbox(
+            "Beam Condition",
+            ["Rolled", "Welded"]
+        )
+        truss_analysis.endcondition = st.selectbox(
+            "Restraint",
+            ["Free","Partial","Full","Cantilever"]
+        )
+
+    if st.button("Design Beam"):
+
+        try:
+            if beam_type == "Restrained":
+                result = truss_analysis.restrained_beam(M, V)
+
+            else:
+                result = truss_analysis.unrestrained_beam(M, V, L)
+
+            st.success("Design Result")
+            st.dataframe(pd.DataFrame([result]))
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+elif task == "Beam Analysis & Design":
 
     st.header("Beam Analysis & Design")
 
