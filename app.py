@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import libfunc
 import truss_analysis
+from extras import *
 
 def steel_input_ui(val=False):
     if not val:
@@ -343,18 +344,15 @@ elif task == "Simple Beam Design":
 
 elif task == "Beam Analysis & Design":
 
-    st.header("Beam Analysis & Design")
+    st.header("Beam Analysis & Design (Moment Distribution)")
 
     steel_input_ui(True)
 
     st.write("---")
 
-    # -------------------------
-    # GEOMETRY INPUT
-    # -------------------------
-
-    beam_length = st.number_input("Total Beam Length (m)", value=10.0)
-
+    # =========================
+    # SUPPORT INPUT
+    # =========================
     st.subheader("Supports")
 
     n_supports = st.number_input("Number of Supports", min_value=2, value=2)
@@ -365,20 +363,29 @@ elif task == "Beam Analysis & Design":
         col1, col2 = st.columns(2)
 
         with col1:
-            x = st.number_input(f"Support {i+1} Position (m)", key=f"sx{i}")
+            x = st.number_input(f"Support {i+1} Position (m)", key=f"sx_md{i}")
+
         with col2:
             typ = st.selectbox(
                 f"Support {i+1} Type",
-                ["Pinned", "Fixed", "Roller"],
-                key=f"st{i}"
+                ["Pinned", "Fixed"],
+                key=f"st_md{i}"
             )
 
-        supports.append((x, typ))
+        supports.append((x, typ.lower()))
 
-    # -------------------------
+    supports = sorted(supports, key=lambda x: x[0])
+
+    # =========================
+    # SPANS
+    # =========================
+    spans = []
+    for i in range(len(supports)-1):
+        spans.append(supports[i+1][0] - supports[i][0])
+
+    # =========================
     # LOAD INPUT
-    # -------------------------
-
+    # =========================
     st.subheader("Loads")
 
     n_loads = st.number_input("Number of Loads", min_value=1, value=1)
@@ -387,192 +394,154 @@ elif task == "Beam Analysis & Design":
 
     for i in range(int(n_loads)):
 
-        load_type = st.selectbox(
+        ltype = st.selectbox(
             f"Load {i+1} Type",
             ["Point Load", "UDL"],
-            key=f"lt{i}"
+            key=f"lt_md{i}"
         )
 
-        if load_type == "Point Load":
-            P = st.number_input(f"P{i+1} (kN)", key=f"P{i}")
-            x = st.number_input(f"Position (m)", key=f"Px{i}")
+        if ltype == "Point Load":
+            P = st.number_input(f"P{i+1} (kN)", key=f"P_md{i}")
+            x = st.number_input(f"Position (m)", key=f"Px_md{i}")
 
             loads.append(("point", P, x))
 
         else:
-            w = st.number_input(f"w{i+1} (kN/m)", key=f"w{i}")
-            a = st.number_input(f"Start (m)", key=f"a{i}")
-            b = st.number_input(f"End (m)", key=f"b{i}")
+            w = st.number_input(f"w{i+1} (kN/m)", key=f"w_md{i}")
 
-            loads.append(("udl", w, a, b))
+            start_span = st.number_input(
+                f"Start Span No (1-based)",
+                min_value=1,
+                max_value=len(spans),
+                key=f"ws_md{i}"
+            )
+
+            end_span = st.number_input(
+                f"End Span No (1-based)",
+                min_value=1,
+                max_value=len(spans),
+                key=f"we_md{i}"
+            )
+
+            loads.append(("udl", w, int(start_span), int(end_span)))
 
     st.write("---")
 
-    # -------------------------
-    # BEAM ANALYSIS (STIFFNESS)
-    # -------------------------
-
-    def beam_analysis(L_total, supports, loads):
-        import numpy as np
-
-        # -------------------------
-        # NODES
-        # -------------------------
-        point_positions = [l[2] for l in loads if l[0] == "point"]
-        node_positions = sorted(set([0, L_total] + [s[0] for s in supports] + point_positions))
-
-        n = len(node_positions)
-        dof = 2 * n
-
-        K = np.zeros((dof, dof))
-        F = np.zeros(dof)
-
-        E = 210000000  # kN/m²
-        I = 8e-5  # m⁴
-        EI = E * I
-
-        # -------------------------
-        # ELEMENT ASSEMBLY
-        # -------------------------
-        for i in range(n - 1):
-            x1, x2 = node_positions[i], node_positions[i + 1]
-            L = x2 - x1
-
-            idx = [2 * i, 2 * i + 1, 2 * (i + 1), 2 * (i + 1) + 1]
-
-            k = (EI / L ** 3) * np.array([
-                [12, 6 * L, -12, 6 * L],
-                [6 * L, 4 * L ** 2, -6 * L, 2 * L ** 2],
-                [-12, -6 * L, 12, -6 * L],
-                [6 * L, 2 * L ** 2, -6 * L, 4 * L ** 2]
-            ])
-
-            for a in range(4):
-                for b in range(4):
-                    K[idx[a], idx[b]] += k[a, b]
-
-            # -------------------------
-            # UDL → FIXED END FORCES
-            # -------------------------
-            for load in loads:
-                if load[0] == "udl":
-                    _, w, a, b = load
-
-                    # check overlap
-                    if x1 >= a and x2 <= b:
-                        fe = np.array([
-                            w * L / 2,
-                            w * L ** 2 / 12,
-                            w * L / 2,
-                            -w * L ** 2 / 12
-                        ])
-
-                        # subtract FEF (THIS WAS YOUR BUG)
-                        F[idx] -= fe
-
-        # -------------------------
-        # POINT LOADS
-        # -------------------------
-        for load in loads:
-            if load[0] == "point":
-                _, P, x = load
-                node = node_positions.index(x)
-                F[2 * node] -= P  # downward load
-
-        # -------------------------
-        # BOUNDARY CONDITIONS
-        # -------------------------
-        fixed = []
-        for x, typ in supports:
-            node = node_positions.index(x)
-
-            fixed.append(2 * node)  # vertical restrained
-
-            if typ == "Fixed":
-                fixed.append(2 * node + 1)
-
-        free = [i for i in range(dof) if i not in fixed]
-
-        d = np.zeros(dof)
-        if free:
-            d[free] = np.linalg.solve(K[np.ix_(free, free)], F[free])
-
-        # -------------------------
-        # INTERNAL FORCES
-        # -------------------------
-        Mmax = 0
-        Vmax = 0
-
-        for i in range(n - 1):
-            x1, x2 = node_positions[i], node_positions[i + 1]
-            L = x2 - x1
-
-            idx = [2 * i, 2 * i + 1, 2 * (i + 1), 2 * (i + 1) + 1]
-
-            k = (EI / L ** 3) * np.array([
-                [12, 6 * L, -12, 6 * L],
-                [6 * L, 4 * L ** 2, -6 * L, 2 * L ** 2],
-                [-12, -6 * L, 12, -6 * L],
-                [6 * L, 2 * L ** 2, -6 * L, 4 * L ** 2]
-            ])
-
-            f_disp = k @ d[idx]
-
-            # ADD BACK FEF (critical fix)
-            f_fef = np.zeros(4)
-            for load in loads:
-                if load[0] == "udl":
-                    _, w, a, b = load
-                    if x1 >= a and x2 <= b:
-                        f_fef = np.array([
-                            w * L / 2,
-                            w * L ** 2 / 12,
-                            w * L / 2,
-                            -w * L ** 2 / 12
-                        ])
-
-            f_int = f_disp + f_fef
-
-            Vmax = max(Vmax, abs(f_int[0]), abs(f_int[2]))
-            Mmax = max(Mmax, abs(f_int[1]), abs(f_int[3]))
-
-        return Mmax, Vmax
-    # -------------------------
-    # AUTO RESTRAINT
-    # -------------------------
-
-    def detect_restraint(supports):
-        types = [s[1] for s in supports]
-
-        if all(t == "Fixed" for t in types):
-            return "Full"
-        elif "Fixed" in types:
-            return "Partial"
-        elif types[0] == "Fixed" and len(types) == 1:
-            return "Cantilever"
-        else:
-            return "Free"
-
-    # -------------------------
-    # RUN
-    # -------------------------
-
+    # =========================
+    # ANALYSIS + DESIGN
+    # =========================
     if st.button("Analyze & Design Beam"):
 
         try:
-            M, V = beam_analysis(beam_length, supports, loads)
+            import numpy as np
+            import math
+
+            # -------------------------
+            # END CONDITIONS
+            # -------------------------
+            end_conditions = []
+            for s in supports:
+                if s[1] == "fixed":
+                    end_conditions.append("fixed")
+                else:
+                    end_conditions.append("pinned")
+
+            # -------------------------
+            # SECTION (EI)
+            # -------------------------
+            sections = [1.0 for _ in spans]
+
+            # -------------------------
+            # LOAD → w PER SPAN
+            # -------------------------
+            w_span = [0.0]*len(spans)
+
+            for load in loads:
+
+                if load[0] == "udl":
+                    _, w, s1, s2 = load
+                    for i in range(s1-1, s2):
+                        w_span[i] += w
+
+                elif load[0] == "point":
+                    _, P, x = load
+
+                    for i in range(len(spans)):
+                        a = sum(spans[:i])
+                        b = sum(spans[:i+1])
+
+                        if a <= x <= b:
+                            L = spans[i]
+                            w_span[i] += (2*P)/L   # equivalent UDL
+
+            # -------------------------
+            # USE YOUR FUNCTION
+            # -------------------------
+            w_avg = np.mean(w_span)
+
+            end_moments = moment_dist(
+                w_avg,
+                end_conditions,
+                spans,
+                sections
+            )
+
+            # -------------------------
+            # MAX M + V
+            # -------------------------
+            def get_max_M_V(end_moments, spans, w_span):
+
+                Mmax = 0
+                Vmax = 0
+
+                for i, (Mab, Mba) in enumerate(end_moments):
+
+                    L = spans[i]
+                    w = w_span[i]
+
+                    # shear-based critical point
+                    try:
+                        x = L/2 - (Mba - Mab)/(2*w*L)
+                        xs = [0, L, x]
+                    except:
+                        xs = [0, L]
+
+                    for xi in xs:
+                        if 0 <= xi <= L:
+                            M = Mab*(1 - xi/L) + Mba*(xi/L) + w*xi*(L-xi)/2
+                            Mmax = max(Mmax, abs(M))
+
+                    V = abs((w*L/2) + (Mab + Mba)/L)
+                    Vmax = max(Vmax, V)
+
+                return Mmax, Vmax
+
+            M, V = get_max_M_V(end_moments, spans, w_span)
 
             st.info(f"Max Moment = {round(M,2)} kNm")
             st.info(f"Max Shear = {round(V,2)} kN")
 
-            restraint = detect_restraint(supports)
+            # -------------------------
+            # AUTO RESTRAINT
+            # -------------------------
+            types = [s[1] for s in supports]
 
+            if all(t == "fixed" for t in types):
+                restraint = "Full"
+            elif "fixed" in types:
+                restraint = "Partial"
+            else:
+                restraint = "Free"
+
+            # -------------------------
+            # DESIGN
+            # -------------------------
             if restraint == "Full":
                 result = truss_analysis.restrained_beam(M, V)
             else:
                 truss_analysis.condition = "Rolled"
                 truss_analysis.endcondition = restraint
-                result = truss_analysis.unrestrained_beam(M, V, beam_length*1000)
+                result = truss_analysis.unrestrained_beam(M, V, sum(spans)*1000)
 
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
