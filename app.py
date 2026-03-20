@@ -453,21 +453,42 @@ elif task == "Beam Analysis & Design":
                 i = min(range(n), key=lambda j: abs(node_positions[j] - x))
                 F[2*i] -= P * 1000  # N
 
+
             elif load[0] == "udl":
+
                 _, w, a, b = load
 
                 for i in range(n - 1):
+
                     x1 = node_positions[i]
-                    x2 = node_positions[i+1]
+
+                    x2 = node_positions[i + 1]
 
                     if x2 <= a or x1 >= b:
                         continue
 
-                    L = (x2 - x1)
-                    wN = w * 1000
+                    L = (x2 - x1) * 1000  # mm
 
-                    F[2*i] -= wN * L / 2
-                    F[2*(i+1)] -= wN * L / 2
+                    wN = w * 1000 / 1000  # kN/m → N/mm
+
+                    # Equivalent nodal loads (beam element)
+
+                    fe = np.array([
+
+                        wN * L / 2,
+
+                        wN * L ** 2 / 12,
+
+                        wN * L / 2,
+
+                        -wN * L ** 2 / 12
+
+                    ])
+
+                    idx = [2 * i, 2 * i + 1, 2 * (i + 1), 2 * (i + 1) + 1]
+
+                    for j in range(4):
+                        F[idx[j]] -= fe[j]
 
         # ---- Apply supports ----
         fixed_dofs = []
