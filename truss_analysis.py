@@ -731,7 +731,7 @@ def unrestrained_beam(M, V, L):
         h = float(ex.cell(row=i, column=16).value)
         tf = float(ex.cell(row=i, column=17).value)
         b = float(ex.cell(row=i, column=19).value)
-        iz = float(ex.cell(row=i, column=5).value)
+        iz = float(ex.cell(row=i, column=5).value)*10.0
         if endcondition=="Free":
             k = 1.0
         elif endcondition=="Partial":
@@ -757,7 +757,7 @@ def unrestrained_beam(M, V, L):
             else:
                 alt = 0.49
             phi = 0.5 * (1 + alt*(lamltb - 0.4) + 0.75*(lamltb**2))
-            chi = min(1 / (phi + np.sqrt(phi**2 - 0.75*(lamltb**2))),1.0,1/(lamltb**2))
+            chi = min(1 / (phi + np.sqrt(phi**2 - 0.75*(lamltb**2))),1.0)
         else:
             if hoverb <= 2 and condition == "Welded":
                 alt = 0.49
