@@ -768,6 +768,11 @@ def unrestrained_beam(M, V, L):
             phi = 0.5 * (1 + alt*(lamltb - 0.2) + (lamltb**2))
             chi = min(1 / (phi + np.sqrt(phi**2 - (lamltb**2))),1.0)
         Mbrd = chi * Wpl * (fy/gamma_M1)
+        # NOTE:
+        # Mbrd is computed twice in this function.
+        # The first computation (above) is in N·mm and is overwritten later by a kNm version.
+        # This is redundant and potentially confusing.
+        # TODO: Remove the earlier Mbrd definition and keep only the final (post-shear reduction) calculation.
 
         hw = h - 2 * tf
         Av = hw * tw  # shear area (mm²)
