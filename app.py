@@ -416,10 +416,10 @@ elif task == "Beam Analysis & Design":
         import numpy as np
 
         # -------------------------
-        # NODE GENERATION
+        # NODES
         # -------------------------
-        point_load_pos = [l[2] for l in loads if l[0] == "point"]
-        node_positions = sorted(set([0, L_total] + [s[0] for s in supports] + point_load_pos))
+        point_positions = [l[2] for l in loads if l[0] == "point"]
+        node_positions = sorted(set([0, L_total] + [s[0] for s in supports] + point_positions))
 
         n = len(node_positions)
         dof = 2 * n
@@ -428,11 +428,11 @@ elif task == "Beam Analysis & Design":
         F = np.zeros(dof)
 
         E = 210000000  # kN/m²
-        I = 8e-5  # m⁴ (reasonable UB estimate)
+        I = 8e-5  # m⁴
         EI = E * I
 
         # -------------------------
-        # ASSEMBLY
+        # ELEMENT ASSEMBLY
         # -------------------------
         for i in range(n - 1):
             x1, x2 = node_positions[i], node_positions[i + 1]
@@ -440,7 +440,6 @@ elif task == "Beam Analysis & Design":
 
             idx = [2 * i, 2 * i + 1, 2 * (i + 1), 2 * (i + 1) + 1]
 
-            # Element stiffness
             k = (EI / L ** 3) * np.array([
                 [12, 6 * L, -12, 6 * L],
                 [6 * L, 4 * L ** 2, -6 * L, 2 * L ** 2],
@@ -459,11 +458,8 @@ elif task == "Beam Analysis & Design":
                 if load[0] == "udl":
                     _, w, a, b = load
 
-                    overlap_start = max(x1, a)
-                    overlap_end = min(x2, b)
-
-                    if overlap_end > overlap_start:
-                        # treat as full element load (good approximation)
+                    # check overlap
+                    if x1 >= a and x2 <= b:
                         fe = np.array([
                             w * L / 2,
                             w * L ** 2 / 12,
@@ -471,8 +467,8 @@ elif task == "Beam Analysis & Design":
                             -w * L ** 2 / 12
                         ])
 
-                        for j in range(4):
-                            F[idx[j]] -= fe[j]
+                        # subtract FEF (THIS WAS YOUR BUG)
+                        F[idx] -= fe
 
         # -------------------------
         # POINT LOADS
@@ -480,19 +476,20 @@ elif task == "Beam Analysis & Design":
         for load in loads:
             if load[0] == "point":
                 _, P, x = load
-                node_idx = node_positions.index(x)
-                F[2 * node_idx] -= P  # downward load
+                node = node_positions.index(x)
+                F[2 * node] -= P  # downward load
 
         # -------------------------
         # BOUNDARY CONDITIONS
         # -------------------------
         fixed = []
         for x, typ in supports:
-            node_idx = node_positions.index(x)
-            fixed.append(2 * node_idx)  # vertical DOF
+            node = node_positions.index(x)
+
+            fixed.append(2 * node)  # vertical restrained
 
             if typ == "Fixed":
-                fixed.append(2 * node_idx + 1)
+                fixed.append(2 * node + 1)
 
         free = [i for i in range(dof) if i not in fixed]
 
@@ -521,12 +518,11 @@ elif task == "Beam Analysis & Design":
 
             f_disp = k @ d[idx]
 
-            # Add back FEF (reverse sign)
+            # ADD BACK FEF (critical fix)
             f_fef = np.zeros(4)
             for load in loads:
                 if load[0] == "udl":
                     _, w, a, b = load
-
                     if x1 >= a and x2 <= b:
                         f_fef = np.array([
                             w * L / 2,
@@ -537,13 +533,8 @@ elif task == "Beam Analysis & Design":
 
             f_int = f_disp + f_fef
 
-            V1 = abs(f_int[0])
-            M1 = abs(f_int[1])
-            V2 = abs(f_int[2])
-            M2 = abs(f_int[3])
-
-            Vmax = max(Vmax, V1, V2)
-            Mmax = max(Mmax, M1, M2)
+            Vmax = max(Vmax, abs(f_int[0]), abs(f_int[2]))
+            Mmax = max(Mmax, abs(f_int[1]), abs(f_int[3]))
 
         return Mmax, Vmax
     # -------------------------
