@@ -309,7 +309,7 @@ elif task == "Beam Design":
 
     M = st.number_input("Bending Moment (kNm)", value=100.0)
     V = st.number_input("Shear Force (kN)", value=50.0)
-    L = st.number_input("Beam Length (mm)", value=6000.0)
+    L = st.number_input("Beam Length (mm)", value=1500.0)
 
     beam_type = st.selectbox(
         "Beam Type",
