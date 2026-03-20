@@ -415,115 +415,135 @@ elif task == "Beam Analysis & Design":
     def beam_analysis(L_total, supports, loads):
         import numpy as np
 
-        # 1. GENERATE NODES: Include supports AND point load positions
+        # -------------------------
+        # NODE GENERATION
+        # -------------------------
         point_load_pos = [l[2] for l in loads if l[0] == "point"]
         node_positions = sorted(set([0, L_total] + [s[0] for s in supports] + point_load_pos))
 
         n = len(node_positions)
         dof = 2 * n
-        K = np.zeros((dof, dof))
-        F_nodal = np.zeros(dof)  # For direct point loads
-        F_fef = np.zeros(dof)  # For Fixed End Forces (UDLs)
 
-        E = 210000000  # kN/m2
-        I = 0.0001  # m4 (Standard UB approx)
+        K = np.zeros((dof, dof))
+        F = np.zeros(dof)
+
+        E = 210000000  # kN/m²
+        I = 8e-5  # m⁴ (reasonable UB estimate)
         EI = E * I
 
-        # 2. ASSEMBLY
+        # -------------------------
+        # ASSEMBLY
+        # -------------------------
         for i in range(n - 1):
             x1, x2 = node_positions[i], node_positions[i + 1]
             L = x2 - x1
+
             idx = [2 * i, 2 * i + 1, 2 * (i + 1), 2 * (i + 1) + 1]
 
-            # Element Stiffness Matrix (Units: kN and m)
-            k_el = (EI / L ** 3) * np.array([
+            # Element stiffness
+            k = (EI / L ** 3) * np.array([
                 [12, 6 * L, -12, 6 * L],
                 [6 * L, 4 * L ** 2, -6 * L, 2 * L ** 2],
                 [-12, -6 * L, 12, -6 * L],
                 [6 * L, 2 * L ** 2, -6 * L, 4 * L ** 2]
             ])
+
             for a in range(4):
                 for b in range(4):
-                    K[idx[a], idx[b]] += k_el[a, b]
+                    K[idx[a], idx[b]] += k[a, b]
 
-            # 3. UDL LOAD MAPPING (Fixed End Forces)
+            # -------------------------
+            # UDL → FIXED END FORCES
+            # -------------------------
             for load in loads:
                 if load[0] == "udl":
                     _, w, a, b = load
-                    # Calculate overlap of UDL on this specific element
+
                     overlap_start = max(x1, a)
                     overlap_end = min(x2, b)
 
                     if overlap_end > overlap_start:
-                        curr_L = overlap_end - overlap_start
-                        # Simplified: Assume UDL covers full element if it touches it
-                        # For CEDAT precision, use exact FEF integration if UDL is partial
-                        f_fef = np.array([w * L / 2, w * L ** 2 / 12, w * L / 2, -w * L ** 2 / 12])
-                        F_fef[idx] += f_fef
+                        # treat as full element load (good approximation)
+                        fe = np.array([
+                            w * L / 2,
+                            w * L ** 2 / 12,
+                            w * L / 2,
+                            -w * L ** 2 / 12
+                        ])
 
-        # 4. POINT LOAD MAPPING
+                        for j in range(4):
+                            F[idx[j]] -= fe[j]
+
+        # -------------------------
+        # POINT LOADS
+        # -------------------------
         for load in loads:
             if load[0] == "point":
                 _, P, x = load
                 node_idx = node_positions.index(x)
-                F_nodal[2 * node_idx] += P  # Note: Convention down is positive or negative?
-                # Consistent with FEF: Downward load is positive in F vector
+                F[2 * node_idx] -= P  # downward load
 
-        F_total = F_nodal + F_fef
-
-        # 5. BOUNDARY CONDITIONS
-        fixed_dofs = []
+        # -------------------------
+        # BOUNDARY CONDITIONS
+        # -------------------------
+        fixed = []
         for x, typ in supports:
             node_idx = node_positions.index(x)
-            fixed_dofs.append(2 * node_idx)  # Vertical translation fixed
+            fixed.append(2 * node_idx)  # vertical DOF
+
             if typ == "Fixed":
-                fixed_dofs.append(2 * node_idx + 1)  # Rotation fixed
+                fixed.append(2 * node_idx + 1)
 
-        free_dofs = [i for i in range(dof) if i not in fixed_dofs]
+        free = [i for i in range(dof) if i not in fixed]
+
         d = np.zeros(dof)
-        if len(free_dofs) > 0:
-            d[free_dofs] = np.linalg.solve(K[np.ix_(free_dofs, free_dofs)], F_total[free_dofs])
+        if free:
+            d[free] = np.linalg.solve(K[np.ix_(free, free)], F[free])
 
-        # 6. RECOVER MAX M & V (Corrected)
+        # -------------------------
+        # INTERNAL FORCES
+        # -------------------------
         Mmax = 0
         Vmax = 0
 
         for i in range(n - 1):
             x1, x2 = node_positions[i], node_positions[i + 1]
-            L = (x2 - x1) * 1000  # mm
+            L = x2 - x1
+
             idx = [2 * i, 2 * i + 1, 2 * (i + 1), 2 * (i + 1) + 1]
 
-            # 1. Forces from nodal displacements (d)
-            k_local = (EI / L ** 3) * np.array([
+            k = (EI / L ** 3) * np.array([
                 [12, 6 * L, -12, 6 * L],
                 [6 * L, 4 * L ** 2, -6 * L, 2 * L ** 2],
                 [-12, -6 * L, 12, -6 * L],
                 [6 * L, 2 * L ** 2, -6 * L, 4 * L ** 2]
             ])
-            f_disp = k_local @ d[idx]
 
-            # 2. Subtract the Fixed End Forces for this specific element
+            f_disp = k @ d[idx]
+
+            # Add back FEF (reverse sign)
             f_fef = np.zeros(4)
             for load in loads:
                 if load[0] == "udl":
                     _, w, a, b = load
-                    # Check if UDL covers this segment
+
                     if x1 >= a and x2 <= b:
-                        wN = w  # N/mm
-                        f_fef = np.array([wN * L / 2, wN * L ** 2 / 12, wN * L / 2, -wN * L ** 2 / 12])
+                        f_fef = np.array([
+                            w * L / 2,
+                            w * L ** 2 / 12,
+                            w * L / 2,
+                            -w * L ** 2 / 12
+                        ])
 
-            # 3. Total Internal Forces
-            # The internal forces are the displacement forces MINUS the fixed end forces
-            f_internal = f_disp - f_fef
+            f_int = f_disp + f_fef
 
-            # Convert back to kN and kNm for comparison
-            V_start = abs(f_internal[0]) / 1000
-            M_start = abs(f_internal[1]) / 1e6
-            V_end = abs(f_internal[2]) / 1000
-            M_end = abs(f_internal[3]) / 1e6
+            V1 = abs(f_int[0])
+            M1 = abs(f_int[1])
+            V2 = abs(f_int[2])
+            M2 = abs(f_int[3])
 
-            Vmax = max(Vmax, V_start, V_end)
-            Mmax = max(Mmax, M_start, M_end)
+            Vmax = max(Vmax, V1, V2)
+            Mmax = max(Mmax, M1, M2)
 
         return Mmax, Vmax
     # -------------------------
