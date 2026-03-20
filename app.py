@@ -301,38 +301,220 @@ elif task == "Single Member Design":
 
 elif task == "Beam Design":
 
-    st.header("Beam Design")
+    st.header("Beam Analysis & Design")
 
     steel_input_ui(True)
 
     st.write("---")
 
-    M = st.number_input("Bending Moment (kNm)", value=100.0)
-    V = st.number_input("Shear Force (kN)", value=50.0)
-    L = st.number_input("Beam Length (mm)", value=1500.0)
+    # -------------------------
+    # GEOMETRY INPUT
+    # -------------------------
 
-    beam_type = st.selectbox(
-        "Beam Type",
-        ["Restrained", "Unrestrained"]
-    )
-    if beam_type == "Unrestrained":
-        truss_analysis.condition = st.selectbox(
-            "Beam Condition",
-            ["Rolled", "Welded"]
-        )
-        truss_analysis.endcondition = st.selectbox(
-            "Restraint",
-            ["Free","Partial","Full","Cantilever"]
+    beam_length = st.number_input("Total Beam Length (m)", value=10.0)
+
+    st.subheader("Supports")
+
+    n_supports = st.number_input("Number of Supports", min_value=2, value=2)
+
+    supports = []
+
+    for i in range(int(n_supports)):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            x = st.number_input(f"Support {i+1} Position (m)", key=f"sx{i}")
+        with col2:
+            typ = st.selectbox(
+                f"Support {i+1} Type",
+                ["Pinned", "Fixed", "Roller"],
+                key=f"st{i}"
+            )
+
+        supports.append((x, typ))
+
+    # -------------------------
+    # LOAD INPUT
+    # -------------------------
+
+    st.subheader("Loads")
+
+    n_loads = st.number_input("Number of Loads", min_value=1, value=1)
+
+    loads = []
+
+    for i in range(int(n_loads)):
+
+        load_type = st.selectbox(
+            f"Load {i+1} Type",
+            ["Point Load", "UDL"],
+            key=f"lt{i}"
         )
 
-    if st.button("Design Beam"):
+        if load_type == "Point Load":
+            P = st.number_input(f"P{i+1} (kN)", key=f"P{i}")
+            x = st.number_input(f"Position (m)", key=f"Px{i}")
+
+            loads.append(("point", P, x))
+
+        else:
+            w = st.number_input(f"w{i+1} (kN/m)", key=f"w{i}")
+            a = st.number_input(f"Start (m)", key=f"a{i}")
+            b = st.number_input(f"End (m)", key=f"b{i}")
+
+            loads.append(("udl", w, a, b))
+
+    st.write("---")
+
+    # -------------------------
+    # BEAM ANALYSIS (STIFFNESS)
+    # -------------------------
+
+    def beam_analysis(L_total, supports, loads):
+
+        import numpy as np
+
+        # ---- Create nodes ----
+        node_positions = sorted(set([0, L_total] + [s[0] for s in supports]))
+
+        n = len(node_positions)
+        dof = 2 * n
+
+        K = np.zeros((dof, dof))
+        F = np.zeros(dof)
+
+        EI = 1  # arbitrary (cancels out for M/V)
+
+        # ---- Element stiffness ----
+        for i in range(n - 1):
+            L = (node_positions[i+1] - node_positions[i]) * 1000
+
+            k = EI / L**3 * np.array([
+                [12, 6*L, -12, 6*L],
+                [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L],
+                [6*L, 2*L**2, -6*L, 4*L**2]
+            ])
+
+            idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
+
+            for a in range(4):
+                for b in range(4):
+                    K[idx[a], idx[b]] += k[a, b]
+
+        # ---- Load vector ----
+        for load in loads:
+
+            if load[0] == "point":
+                _, P, x = load
+
+                i = min(range(n), key=lambda j: abs(node_positions[j] - x))
+                F[2*i] -= P * 1000  # N
+
+            elif load[0] == "udl":
+                _, w, a, b = load
+
+                for i in range(n - 1):
+                    x1 = node_positions[i]
+                    x2 = node_positions[i+1]
+
+                    if x2 <= a or x1 >= b:
+                        continue
+
+                    L = (x2 - x1)
+                    wN = w * 1000
+
+                    F[2*i] -= wN * L / 2
+                    F[2*(i+1)] -= wN * L / 2
+
+        # ---- Apply supports ----
+        fixed_dofs = []
+
+        for x, typ in supports:
+            i = node_positions.index(x)
+
+            if typ in ["Pinned", "Roller"]:
+                fixed_dofs.append(2*i)
+            elif typ == "Fixed":
+                fixed_dofs.append(2*i)
+                fixed_dofs.append(2*i + 1)
+
+        free_dofs = [i for i in range(dof) if i not in fixed_dofs]
+
+        Kff = K[np.ix_(free_dofs, free_dofs)]
+        Ff = F[free_dofs]
+
+        d = np.zeros(dof)
+
+        if len(Ff) > 0:
+            d[free_dofs] = np.linalg.solve(Kff, Ff)
+
+        # ---- Recover forces ----
+        R = K @ d - F
+
+        # ---- Estimate M & V ----
+        Mmax = 0
+        Vmax = 0
+
+        for i in range(n - 1):
+            L = (node_positions[i+1] - node_positions[i]) * 1000
+
+            idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
+            u = d[idx]
+
+            k_local = EI / L**3 * np.array([
+                [12, 6*L, -12, 6*L],
+                [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L],
+                [6*L, 2*L**2, -6*L, 4*L**2]
+            ])
+
+            f_local = k_local @ u
+
+            V = max(abs(f_local[0]), abs(f_local[2])) / 1000
+            M = max(abs(f_local[1]), abs(f_local[3])) / 1e6
+
+            Vmax = max(Vmax, V)
+            Mmax = max(Mmax, M)
+
+        return Mmax, Vmax
+
+    # -------------------------
+    # AUTO RESTRAINT
+    # -------------------------
+
+    def detect_restraint(supports):
+        types = [s[1] for s in supports]
+
+        if all(t == "Fixed" for t in types):
+            return "Full"
+        elif "Fixed" in types:
+            return "Partial"
+        elif types[0] == "Fixed" and len(types) == 1:
+            return "Cantilever"
+        else:
+            return "Free"
+
+    # -------------------------
+    # RUN
+    # -------------------------
+
+    if st.button("Analyze & Design Beam"):
 
         try:
-            if beam_type == "Restrained":
-                result = truss_analysis.restrained_beam(M, V)
+            M, V = beam_analysis(beam_length, supports, loads)
 
+            st.info(f"Max Moment = {round(M,2)} kNm")
+            st.info(f"Max Shear = {round(V,2)} kN")
+
+            restraint = detect_restraint(supports)
+
+            if restraint == "Full":
+                result = truss_analysis.restrained_beam(M, V)
             else:
-                result = truss_analysis.unrestrained_beam(M, V, L)
+                truss_analysis.condition = "Rolled"
+                truss_analysis.endcondition = restraint
+                result = truss_analysis.unrestrained_beam(M, V, beam_length*1000)
 
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
