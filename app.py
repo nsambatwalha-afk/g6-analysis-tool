@@ -440,11 +440,20 @@ elif task == "Beam Analysis & Design":
             # END CONDITIONS
             # -------------------------
             end_conditions = []
-            for s in supports:
-                if s[1] == "fixed":
-                    end_conditions.append("fixed")
+            end_conditions = []
+
+            for i, s in enumerate(supports):
+
+                if i == 0 or i == len(supports) - 1:
+                    # ends
+                    if s[1] == "fixed":
+                        end_conditions.append("fixed")
+                    else:
+                        end_conditions.append("pinned")
+
                 else:
-                    end_conditions.append("pinned")
+                    # internal supports ALWAYS continuous
+                    end_conditions.append("continuous")
 
             # -------------------------
             # SECTION (EI)
@@ -489,7 +498,7 @@ elif task == "Beam Analysis & Design":
             # -------------------------
             # MAX M + V
             # -------------------------
-            def get_max_M_V(end_moments, spans, w_span):
+            def get_max_M_V(end_moments, spans, w):
 
                 Mmax = 0
                 Vmax = 0
@@ -497,22 +506,24 @@ elif task == "Beam Analysis & Design":
                 for i, (Mab, Mba) in enumerate(end_moments):
 
                     L = spans[i]
-                    w = w_span[i]
 
-                    # shear-based critical point
-                    try:
-                        x = L/2 - (Mba - Mab)/(2*w*L)
-                        xs = [0, L, x]
-                    except:
-                        xs = [0, L]
+                    # -------- CRITICAL POINT --------
+                    # shear = 0 → location of max moment
+                    x = (L / 2) - ((Mba - Mab) / (2 * w * L))
 
-                    for xi in xs:
-                        if 0 <= xi <= L:
-                            M = Mab*(1 - xi/L) + Mba*(xi/L) + w*xi*(L-xi)/2
-                            Mmax = max(Mmax, abs(M))
+                    points = [0, L]
 
-                    V = abs((w*L/2) + (Mab + Mba)/L)
-                    Vmax = max(Vmax, V)
+                    if 0 <= x <= L:
+                        points.append(x)
+
+                    # -------- MOMENT CHECK --------
+                    for xi in points:
+                        M = Mab * (1 - xi / L) + Mba * (xi / L) + w * xi * (L - xi) / 2
+                        Mmax = max(Mmax, abs(M))
+
+                    # -------- SHEAR --------
+                    V_left = abs((w * L / 2) + (Mab + Mba) / L)
+                    Vmax = max(Vmax, V_left)
 
                 return Mmax, Vmax
 

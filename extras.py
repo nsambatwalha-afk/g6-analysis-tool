@@ -251,3 +251,17 @@ def moment_dist(w,end_conditions,spans,sections):
     # into list of tuples [(Mab, Mba), (Mbc, Mcb), ...]
     end_moments_pairs = [(end_moments[i], end_moments[i + 1]) for i in range(0, len(end_moments), 2)]
     return end_moments_pairs
+
+def example():
+    w = 4.0
+    end_conditions = ["pinned", "continuous", "continuous", "pinned"]
+    spans = [18.0, 20.0, 18.0]
+    sections = [1.0, 1.0, 1.0]
+    val = moment_dist(w, end_conditions, spans, sections)
+    return val
+
+
+if __name__ == '__main__':
+    print('Running example...')
+    from pprint import pprint
+    pprint(example())
