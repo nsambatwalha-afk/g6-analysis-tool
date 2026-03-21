@@ -442,17 +442,17 @@ elif task == "Beam Analysis & Design":
                     raise ValueError(f"Unknown support type: {typ}")
 
             # -------------------------
-            # ADD LOADS
+            # ADD LOADS (IMPORTANT: convert to N)
             # -------------------------
             for load in loads:
 
                 if load[0] == "point":
                     _, P, x = load
-                    beam.add_loads(PointLoad(-P, x))  # downward negative
+                    beam.add_loads(PointLoad(-P * 1000, x))  # kN → N
 
                 elif load[0] == "udl":
                     _, w, a, b = load
-                    beam.add_loads(UDL(-w, (a, b)))
+                    beam.add_loads(UDL(-w * 1000, (a, b)))  # kN/m → N/m
 
             # -------------------------
             # SOLVE
@@ -460,22 +460,25 @@ elif task == "Beam Analysis & Design":
             beam.analyse()
 
             # -------------------------
-            # EXTRACT RESULTS
+            # EXTRACT RESULTS (CORRECT WAY)
             # -------------------------
-            m_max = beam.get_bending_moment(return_max=True)
-            # Print a text summary of the beam setup
-            st.text("Beam Summary Details:")
-            st.text(beam)
-            # After beam.analyse()
-            reactions = beam.get_reaction_forces()
-            st.write("Support Reactions:", reactions)
-
-
-            M = max(abs(v) for v in M_vals)
-            V = max(abs(v) for v in V_vals)
+            M = beam.get_bending_moment(return_absmax=True) / 1000  # → kNm
+            V = beam.get_shear_force(return_absmax=True) / 1000     # → kN
 
             st.info(f"Max Moment = {round(M,2)} kNm")
             st.info(f"Max Shear = {round(V,2)} kN")
+
+            # -------------------------
+            # OPTIONAL DEBUG INFO
+            # -------------------------
+            st.text("Beam Summary:")
+            st.text(beam)
+
+            reactions = {
+                s[0]: beam.get_reaction(s[0])
+                for s in supports
+            }
+            st.write("Support Reactions:", reactions)
 
             # -------------------------
             # AUTO RESTRAINT DETECTION
