@@ -347,6 +347,14 @@ elif task == "Beam Analysis & Design":
     st.header("Beam Analysis & Design")
 
     steel_input_ui(True)
+    condition = st.selectbox(
+        "Beam Condition",
+        ["Rolled", "Welded"]
+    )
+    latrestrain = st.selectbox(
+        "Laterally Restrained?",
+        [True, False]
+    )
 
     st.write("---")
 
@@ -500,11 +508,11 @@ elif task == "Beam Analysis & Design":
             # -------------------------
             # DESIGN
             # -------------------------
-            if restraint == "Full":
+            if latrestrain:
                 result = truss_analysis.restrained_beam(M, V)
 
             else:
-                truss_analysis.condition = "Rolled"
+                truss_analysis.condition = condition
                 truss_analysis.endcondition = restraint
                 result = truss_analysis.unrestrained_beam(M, V, L * 1000)
 
