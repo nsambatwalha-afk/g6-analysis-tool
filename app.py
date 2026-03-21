@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import libfunc
 import truss_analysis
-from extras import *
+from indeterminatebeam import *
 
 def steel_input_ui(val=False):
     if not val:
@@ -344,14 +344,19 @@ elif task == "Simple Beam Design":
 
 elif task == "Beam Analysis & Design":
 
-    st.header("Beam Analysis & Design (Moment Distribution)")
+    st.header("Beam Analysis & Design")
 
     steel_input_ui(True)
 
     st.write("---")
 
     # =========================
-    # SUPPORT INPUT
+    # BEAM LENGTH
+    # =========================
+    L = st.number_input("Beam Length (m)", value=10.0)
+
+    # =========================
+    # SUPPORTS
     # =========================
     st.subheader("Supports")
 
@@ -363,28 +368,21 @@ elif task == "Beam Analysis & Design":
         col1, col2 = st.columns(2)
 
         with col1:
-            x = st.number_input(f"Support {i+1} Position (m)", key=f"sx_md{i}")
+            x = st.number_input(f"Support {i+1} Position (m)", key=f"sx_new{i}")
 
         with col2:
             typ = st.selectbox(
                 f"Support {i+1} Type",
-                ["Pinned", "Fixed"],
-                key=f"st_md{i}"
+                ["Pinned", "Roller", "Fixed"],
+                key=f"st_new{i}"
             )
 
         supports.append((x, typ.lower()))
 
-    supports = sorted(supports, key=lambda x: x[0])
+    st.write("---")
 
     # =========================
-    # SPANS
-    # =========================
-    spans = []
-    for i in range(len(supports)-1):
-        spans.append(supports[i+1][0] - supports[i][0])
-
-    # =========================
-    # LOAD INPUT
+    # LOADS
     # =========================
     st.subheader("Loads")
 
@@ -397,150 +395,96 @@ elif task == "Beam Analysis & Design":
         ltype = st.selectbox(
             f"Load {i+1} Type",
             ["Point Load", "UDL"],
-            key=f"lt_md{i}"
+            key=f"lt_new{i}"
         )
 
         if ltype == "Point Load":
-            P = st.number_input(f"P{i+1} (kN)", key=f"P_md{i}")
-            x = st.number_input(f"Position (m)", key=f"Px_md{i}")
+            P = st.number_input(f"P{i+1} (kN)", key=f"P_new{i}")
+            x = st.number_input(f"Position (m)", key=f"Px_new{i}")
 
             loads.append(("point", P, x))
 
         else:
-            w = st.number_input(f"w{i+1} (kN/m)", key=f"w_md{i}")
+            w = st.number_input(f"w{i+1} (kN/m)", key=f"w_new{i}")
+            a = st.number_input(f"Start (m)", key=f"a_new{i}")
+            b = st.number_input(f"End (m)", key=f"b_new{i}")
 
-            start_span = st.number_input(
-                f"Start Span No (1-based)",
-                min_value=1,
-                max_value=len(spans),
-                key=f"ws_md{i}"
-            )
-
-            end_span = st.number_input(
-                f"End Span No (1-based)",
-                min_value=1,
-                max_value=len(spans),
-                key=f"we_md{i}"
-            )
-
-            loads.append(("udl", w, int(start_span), int(end_span)))
+            loads.append(("udl", w, a, b))
 
     st.write("---")
 
     # =========================
-    # ANALYSIS + DESIGN
+    # RUN ANALYSIS
     # =========================
     if st.button("Analyze & Design Beam"):
 
         try:
-            import numpy as np
-            import math
+            # -------------------------
+            # CREATE BEAM
+            # -------------------------
+            beam = Beam(L)
 
             # -------------------------
-            # END CONDITIONS
+            # ADD SUPPORTS
             # -------------------------
-            end_conditions = []
-            end_conditions = []
+            for x, typ in supports:
 
-            for i, s in enumerate(supports):
+                if typ == "pinned":
+                    beam.add_support(Support(x, (1, 1, 0)))
 
-                if i == 0 or i == len(supports) - 1:
-                    # ends
-                    if s[1] == "fixed":
-                        end_conditions.append("fixed")
-                    else:
-                        end_conditions.append("pinned")
+                elif typ == "roller":
+                    beam.add_support(Support(x, (0, 1, 0)))
+
+                elif typ == "fixed":
+                    beam.add_support(Support(x, (1, 1, 1)))
 
                 else:
-                    # internal supports ALWAYS continuous
-                    end_conditions.append("continuous")
+                    raise ValueError(f"Unknown support type: {typ}")
 
             # -------------------------
-            # SECTION (EI)
+            # ADD LOADS
             # -------------------------
-            sections = [1.0 for _ in spans]
-
-            # -------------------------
-            # LOAD → w PER SPAN
-            # -------------------------
-            w_span = [0.0]*len(spans)
-
             for load in loads:
 
-                if load[0] == "udl":
-                    _, w, s1, s2 = load
-                    for i in range(s1-1, s2):
-                        w_span[i] += w
-
-                elif load[0] == "point":
+                if load[0] == "point":
                     _, P, x = load
+                    beam.add_load(PointLoad(-P, x))  # downward negative
 
-                    for i in range(len(spans)):
-                        a = sum(spans[:i])
-                        b = sum(spans[:i+1])
-
-                        if a <= x <= b:
-                            L = spans[i]
-                            w_span[i] += (2*P)/L   # equivalent UDL
+                elif load[0] == "udl":
+                    _, w, a, b = load
+                    beam.add_load(UDL(-w, (a, b)))
 
             # -------------------------
-            # USE YOUR FUNCTION
+            # SOLVE
             # -------------------------
-            w_avg = np.mean(w_span)
-
-            end_moments = moment_dist(
-                w_avg,
-                end_conditions,
-                spans,
-                sections
-            )
+            beam.analyse()
 
             # -------------------------
-            # MAX M + V
+            # EXTRACT RESULTS
             # -------------------------
-            def get_max_M_V(end_moments, spans, w):
+            M_vals = beam.get_bending_moment()
+            V_vals = beam.get_shear_force()
 
-                Mmax = 0
-                Vmax = 0
-
-                for i, (Mab, Mba) in enumerate(end_moments):
-
-                    L = spans[i]
-
-                    # -------- CRITICAL POINT --------
-                    # shear = 0 → location of max moment
-                    x = (L / 2) - ((Mba - Mab) / (2 * w * L))
-
-                    points = [0, L]
-
-                    if 0 <= x <= L:
-                        points.append(x)
-
-                    # -------- MOMENT CHECK --------
-                    for xi in points:
-                        M = Mab * (1 - xi / L) + Mba * (xi / L) + w * xi * (L - xi) / 2
-                        Mmax = max(Mmax, abs(M))
-
-                    # -------- SHEAR --------
-                    V_left = abs((w * L / 2) + (Mab + Mba) / L)
-                    Vmax = max(Vmax, V_left)
-
-                return Mmax, Vmax
-
-            M, V = get_max_M_V(end_moments, spans, w_span)
+            M = max(abs(v) for v in M_vals)
+            V = max(abs(v) for v in V_vals)
 
             st.info(f"Max Moment = {round(M,2)} kNm")
             st.info(f"Max Shear = {round(V,2)} kN")
 
             # -------------------------
-            # AUTO RESTRAINT
+            # AUTO RESTRAINT DETECTION
             # -------------------------
             types = [s[1] for s in supports]
 
             if all(t == "fixed" for t in types):
                 restraint = "Full"
+
             elif "fixed" in types:
                 restraint = "Partial"
+
+            elif len(types) == 1 and types[0] == "fixed":
+                restraint = "Cantilever"
+
             else:
                 restraint = "Free"
 
@@ -549,10 +493,11 @@ elif task == "Beam Analysis & Design":
             # -------------------------
             if restraint == "Full":
                 result = truss_analysis.restrained_beam(M, V)
+
             else:
                 truss_analysis.condition = "Rolled"
                 truss_analysis.endcondition = restraint
-                result = truss_analysis.unrestrained_beam(M, V, sum(spans)*1000)
+                result = truss_analysis.unrestrained_beam(M, V, L * 1000)
 
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
