@@ -463,7 +463,12 @@ elif task == "Beam Analysis & Design":
             # EXTRACT RESULTS
             # -------------------------
             m_max = beam.get_bending_moment(return_max=True)
-            st.info(f"Maximum Moment: {m_max} kNm")
+            # Print a text summary of the beam setup
+            st.text("Beam Summary Details:")
+            st.text(beam)
+            # After beam.analyse()
+            reactions = beam.get_reaction_forces()
+            st.write("Support Reactions:", reactions)
 
 
             M = max(abs(v) for v in M_vals)
