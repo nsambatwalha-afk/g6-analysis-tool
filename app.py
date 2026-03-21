@@ -462,7 +462,7 @@ elif task == "Beam Analysis & Design":
             # -------------------------
             # EXTRACT RESULTS
             # -------------------------
-            m_max = beam.get_bending_moment(return_min=True)
+            m_max = beam.get_bending_moment(return_max=True)
             st.info(f"Maximum Moment: {m_max} kNm")
 
 
