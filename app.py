@@ -474,11 +474,11 @@ elif task == "Beam Analysis & Design":
             # st.text("Beam Summary:")
             # st.text(beam)
 
-            reactions = {
-                s[0]: beam.get_reaction(s[0])
-                for s in supports
-            }
-            st.write("Support Reactions:", reactions)
+            # reactions = {
+            #     s[0]: beam.get_reaction(s[0])
+            #     for s in supports
+            # }
+            # st.write("Support Reactions:", reactions)
 
             # -------------------------
             # AUTO RESTRAINT DETECTION
