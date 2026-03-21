@@ -452,7 +452,7 @@ elif task == "Beam Analysis & Design":
 
                 elif load[0] == "udl":
                     _, w, a, b = load
-                    beam.add_loads(UDL(w * 1000, (a, b), 90))  # kN/m → N/m
+                    beam.add_loads(UDL(-1*w * 1000, (a, b), 90))  # kN/m → N/m
 
             # -------------------------
             # SOLVE
