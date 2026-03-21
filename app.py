@@ -430,13 +430,13 @@ elif task == "Beam Analysis & Design":
             for x, typ in supports:
 
                 if typ == "pinned":
-                    beam.add_support(Support(x, (1, 1, 0)))
+                    beam.add_supports(Support(x, (1, 1, 0)))
 
                 elif typ == "roller":
-                    beam.add_support(Support(x, (0, 1, 0)))
+                    beam.add_supports(Support(x, (0, 1, 0)))
 
                 elif typ == "fixed":
-                    beam.add_support(Support(x, (1, 1, 1)))
+                    beam.add_supports(Support(x, (1, 1, 1)))
 
                 else:
                     raise ValueError(f"Unknown support type: {typ}")
@@ -448,11 +448,11 @@ elif task == "Beam Analysis & Design":
 
                 if load[0] == "point":
                     _, P, x = load
-                    beam.add_load(PointLoad(-P, x))  # downward negative
+                    beam.add_loads(PointLoad(-P, x))  # downward negative
 
                 elif load[0] == "udl":
                     _, w, a, b = load
-                    beam.add_load(UDL(-w, (a, b)))
+                    beam.add_loads(UDL(-w, (a, b)))
 
             # -------------------------
             # SOLVE
