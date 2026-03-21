@@ -468,11 +468,11 @@ elif task == "Beam Analysis & Design":
             st.info(f"Max Moment = {round(M,2)} kNm")
             st.info(f"Max Shear = {round(V,2)} kN")
 
-            # -------------------------
-            # OPTIONAL DEBUG INFO
-            # -------------------------
-            st.text("Beam Summary:")
-            st.text(beam)
+            # # -------------------------
+            # # OPTIONAL DEBUG INFO
+            # # -------------------------
+            # st.text("Beam Summary:")
+            # st.text(beam)
 
             reactions = {
                 s[0]: beam.get_reaction(s[0])
