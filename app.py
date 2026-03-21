@@ -464,7 +464,7 @@ elif task == "Beam Analysis & Design":
             # -------------------------
             M_vals = beam.get_bending_moment()
             V_vals = beam.get_shear_force()
-            st.info(f"mmm = {round(M_vals,2)} kNm")
+            st.info(f"mmm = {M_vals} kNm")
 
             M = max(abs(v) for v in M_vals)
             V = max(abs(v) for v in V_vals)
