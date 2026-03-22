@@ -584,7 +584,6 @@ elif task == "Beam-Column Design":
         Myed = 0.0
         # posseidony = 0.0
     Mzed = max(M1_z, M2_z)
-    C1 = 1 / (0.3 + 0.7*(posseidon**2))
 
 
     L = st.number_input(
@@ -651,7 +650,6 @@ elif task == "Beam-Column Design":
                 Myed=Myed,
                 shape=shape,
                 C1=C1,
-                lat=True,
                 all_axis_similar=all_axis_similar
             )
 
