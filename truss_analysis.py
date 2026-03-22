@@ -1043,14 +1043,11 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
     else:
         raise ValueError("Unknown shape")
     A0 = Ned/fy
-    A = float(ex.cell(row=i, column=14).value)
-    n = 2
+    A = 0.0
     while True:
-        n += 1
         while not A>A0:
             i += 1
             A = float(ex.cell(row=i, column=14).value)
-        i = max(i, n)
         pop = beam_column_table(shape, i)
         pop.seclass = section_class(fy,pop,Ned)
         if pop.seclass == 1 or pop.seclass == 2:
