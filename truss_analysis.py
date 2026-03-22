@@ -984,7 +984,7 @@ def beam_column_table(shape, i):
     tf = float(ex.cell(row=i, column=17).value)
     b = float(ex.cell(row=i, column=19).value)
     iz = float(ex.cell(row=i, column=5).value) * 10.0
-    if condition == "Welded":
+    if condition == "Rolled":
         if (h/b)<=1.2 and not grade=="S460":
             if tf<=100:
                 alphay = 0.34
@@ -1009,6 +1009,13 @@ def beam_column_table(shape, i):
             else:
                 alphay = 0.21
                 alphaz = 0.21
+    else:
+        if tf<=40:
+            alphay = 0.34
+            alphaz = 0.49
+        else:
+            alphay = 0.49
+            alphaz = 0.76
 
 
 
