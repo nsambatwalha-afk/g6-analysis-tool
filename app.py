@@ -660,7 +660,7 @@ elif task == "Beam-Column Design":
 
             st.write("### 📊 Results")
 
-            st.write(f"**Section Index:** {result['section_index']}")
+            st.write(f"**Section Designation:** {result['Designation']}")
             st.write(f"**Cross-section Class:** {result['class']}")
 
             st.write("---")
