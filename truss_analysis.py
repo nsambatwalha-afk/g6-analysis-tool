@@ -1066,7 +1066,8 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
             Nrd = (pop.A*fy)
             Mrd = pop.Wel*fy
         elif pop.seclass == 4:
-            raise ValueError("Unsupported class. Section is Class 4 which is outside our scope.")
+            i += 1
+            continue
         Ncry = ((np.pi**2)*E*pop.Iy)/(Lcry**2)
         Ncrz = ((np.pi**2)*E*pop.Iz)/(Lcrz**2)
         lamy = np.sqrt((pop.A*fy)/Ncry)
