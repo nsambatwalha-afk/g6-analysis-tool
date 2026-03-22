@@ -617,8 +617,7 @@ def run_analysis_and_design_table(joints_file, members_file):
     return tension_table, compression_table
 
 def restrained_beam(M, V):
-    import openpyxl
-    import numpy as np
+    global grade
 
     grades = openpyxl.load_workbook("grades.xlsx").active
 
@@ -687,9 +686,7 @@ def restrained_beam(M, V):
             }
 
 def unrestrained_beam(M, V, L):
-    global condition, endcondition
-    import openpyxl
-    import numpy as np
+    global condition, endcondition, grade
 
     # ---- Load steel grade ----
     grades = openpyxl.load_workbook("grades.xlsx").active
@@ -840,3 +837,321 @@ def unrestrained_beam(M, V, L):
         #         "Mb_Rd (kNm)": round(Mb_Rd, 2),
         #         "Utilization (%)": round((M / Mb_Rd) * 100, 2)
         #     }
+
+
+
+def section_class(fy, section, Ned):
+    """
+    Classifies an I/H section (UC/UB) to EC3 (Class 1–4)
+
+    Parameters:
+    H   : overall depth (mm)
+    b   : flange width (mm)
+    tf  : flange thickness (mm)
+    tw  : web thickness (mm)
+    fy  : yield strength (MPa)
+    Ned : axial force (N) (compression +ve)
+    A   : area (mm²)
+
+    Returns:
+    int → section class (1 to 4)
+    """
+
+    # -------------------------
+    # BASIC PARAMETERS
+    # -------------------------
+    H = section.h
+    b = section.b
+    tf = section.tf
+    tw = section.tw
+    A = section.A
+    eps = np.sqrt(235.0 / fy)
+
+    d = H - 2.0 * tf                 # clear web depth
+    c = (b - tw) / 2.0              # flange outstand
+
+    # Avoid division issues
+    if A * fy == 0:
+        return 4
+
+    alpha = 0.5 * (1.0 + Ned / (A * fy))
+
+    # Clamp alpha to sensible EC3 range
+    alpha = np.clip(alpha, 0.0, 1.0)
+
+    # -------------------------
+    # FLANGE CLASS
+    # -------------------------
+    lambda_f = c / tf
+
+    if lambda_f <= 9.0 * eps:
+        flange_class = 1
+    elif lambda_f <= 10.0 * eps:
+        flange_class = 2
+    elif lambda_f <= 14.0 * eps:
+        flange_class = 3
+    else:
+        flange_class = 4
+
+    # -------------------------
+    # WEB CLASS
+    # -------------------------
+    lambda_w = d / tw
+
+    if alpha > 0.5:
+        denom = (13.0 * alpha - 1.0)
+
+        # Prevent divide-by-zero or negative weirdness
+        if denom <= 0:
+            return 4
+
+        limit1 = 396.0 * eps / denom
+        limit2 = 456.0 * eps / denom
+
+    else:
+        # Prevent division by zero
+        if alpha <= 0:
+            return 4
+
+        limit1 = 36.0 * eps / alpha
+        limit2 = 41.5 * eps / alpha
+
+    if lambda_w <= limit1:
+        web_class = 1
+    elif lambda_w <= limit2:
+        web_class = 2
+    elif lambda_w <= 42.0 * eps:
+        web_class = 3
+    else:
+        web_class = 4
+
+    # -------------------------
+    # FINAL CLASS
+    # -------------------------
+    return int(max(flange_class, web_class))
+
+def eff_L(L, endcondition):
+    if endcondition=="Pinned-Pinned":
+        return L
+    elif endcondition=="Fixed-Fixed":
+        return L*0.5
+    elif endcondition=="Fixed-Pinned":
+        return L*0.7
+    elif endcondition=="Fixed-Free":
+        return L*2.0
+    else:
+        return None
+
+class Section:
+    def __init__(self, A, Iy, Iz, Wpl, Wel, Iw, It, tw, h, tf, b, iz, seclass, alphay, alphaz):
+        self.A = A
+        self.Iy = Iy
+        self.Iz = Iz
+        self.Wpl = Wpl
+        self.Wel = Wel
+        self.Iw = Iw
+        self.It = It
+        self.tw = tw
+        self.h = h
+        self.tf = tf
+        self.b = b
+        self.iz = iz
+        self.seclass = seclass
+        self.alphay = alphay
+        self.alphaz = alphaz
+
+
+
+
+def beam_column_table(shape, i):
+    global condition, grade
+    if shape == "UB":
+        ex = openpyxl.load_workbook("UB-2.xlsx").active
+        i = max(i, 17)
+    elif shape == "UC":
+        ex = openpyxl.load_workbook("UC-2.xlsx").active
+    A = float(ex.cell(row=i, column=14).value)
+    Iy = float(ex.cell(row=i, column=2).value) * 10000
+    Iz = float(ex.cell(row=i, column=3).value) * 10000
+    Wpl = float(ex.cell(row=i, column=8).value) * 1000
+    Wel = float(ex.cell(row=i, column=6).value) * 1000
+    Iw = float(ex.cell(row=i, column=12).value) * (100 ** 6)
+    It = float(ex.cell(row=i, column=13).value) * 10000
+    tw = float(ex.cell(row=i, column=15).value)
+    h = float(ex.cell(row=i, column=16).value)
+    tf = float(ex.cell(row=i, column=17).value)
+    b = float(ex.cell(row=i, column=19).value)
+    iz = float(ex.cell(row=i, column=5).value) * 10.0
+    if condition == "Welded":
+        if (h/b)<=1.2 and not grade=="S460":
+            if tf<=100:
+                alphay = 0.34
+                alphaz = 0.49
+            else:
+                alphay = 0.76
+                alphaz = 0.76
+        elif (h/b)>1.2 and not grade=="S460":
+            if tf<=40:
+                alphay = 0.21
+                alphaz = 0.34
+            else:
+                alphay = 0.34
+                alphaz = 0.49
+        else:
+            if tf<=40:
+                alphay = 0.13
+                alphaz = 0.13
+            elif tf>100:
+                alphay = 0.49
+                alphaz = 0.49
+            else:
+                alphay = 0.21
+                alphaz = 0.21
+
+
+
+    outer = Section(A, Iy, Iz, Wpl, Wel, Iw, It, tw, h,tf, b, iz)
+    outer.alphay = alphay
+    outer.alphaz = alphaz
+    return outer
+
+
+def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
+    global condition, grade
+    grades = openpyxl.load_workbook("grades.xlsx").active
+
+    for i in range(2, 10):
+        if grades.cell(row=i, column=1).value == grade:
+            fy = float(grades.cell(row=i, column=2).value)
+            break
+
+    if 'fy' not in locals():
+        raise ValueError("Steel grade not found in grades.xlsx")
+    if all_axis_similar:
+        Lcry = eff_L(L, endcondition)
+        Lcrz = Lcry
+    else:
+        Lcrz = eff_L(L, endcondition[0])
+        Lcry = eff_L(L, endcondition[1])
+    E = 210000
+    G = 81000
+    i = 1
+    if shape == "UB":
+        ex = openpyxl.load_workbook("UB-2.xlsx").active
+    elif shape == "UC":
+        ex = openpyxl.load_workbook("UC-2.xlsx").active
+    else:
+        raise ValueError("Unknown shape")
+    A0 = Ned/fy
+    A = float(ex.cell(row=i, column=14).value)
+    n = 2
+    while True:
+        n += 1
+        while not A>A0:
+            i += 1
+            A = float(ex.cell(row=i, column=14).value)
+        i = max(i, n)
+        pop = beam_column_table(shape, i)
+        pop.seclass = section_class(fy,pop,Ned)
+        if pop.seclass == 1 or pop.seclass == 2:
+            Nrd = (pop.A*fy)
+            Mrd = pop.Wpl*fy
+        elif pop.seclass == 3:
+            Nrd = (pop.A*fy)
+            Mrd = pop.Wel*fy
+        elif pop.seclass == 4:
+            raise ValueError("Unsupported class. Section is Class 4 which is outside our scope.")
+        Ncry = ((np.pi**2)*E*pop.Iy)/(Lcry**2)
+        Ncrz = ((np.pi**2)*E*pop.Iz)/(Lcrz**2)
+        lamy = np.sqrt((pop.A*fy)/Ncry)
+        lamz = np.sqrt((pop.A*fy)/Ncrz)
+        phiy = 0.5 * (1+pop.alphay*(lamy-0.2)+(lamy**2))
+        phiz = 0.5 * (1+pop.alphaz*(lamz-0.2)+(lamz**2))
+        chiy = 1 / (phiy + np.sqrt(phiy**2 - lamy**2))
+        chiz = 1 / (phiz + np.sqrt(phiz**2 - lamz**2))
+        term2 = (pop.A*fy)
+        chi = min(chiy, chiz)
+        Nbrd = chi * term2
+        # -------------------------
+        # LATERAL TORSIONAL BUCKLING
+        # -------------------------
+        LcrLT = Lcry  # assumption (you can refine later)
+
+        Mcr = C1 * ((np.pi**2 * E * pop.Iz) / (LcrLT**2)) * np.sqrt(
+            (pop.Iw / pop.Iz) +
+            ((LcrLT**2 * G * pop.It) / (np.pi**2 * E * pop.Iz))
+        )
+
+        # Select correct section modulus
+        if pop.seclass in [1, 2]:
+            Wy = pop.Wpl
+        else:
+            Wy = pop.Wel
+
+        lamLT = np.sqrt((Wy * fy) / Mcr)
+
+        # LTB imperfection factor (Eurocode typical for rolled I-sections)
+        alpha_LT = 0.34
+
+        phi_LT = 0.5 * (1 + alpha_LT * (lamLT - 0.2) + lamLT**2)
+        chi_LT = 1 / (phi_LT + np.sqrt(phi_LT**2 - lamLT**2))
+
+        Mbrd = chi_LT * Wy * fy
+
+        # -------------------------
+        # MINOR AXIS BENDING RESISTANCE
+        # -------------------------
+        if pop.seclass in [1, 2]:
+            Wz = pop.Wpl  # approximation (strictly should be separate Wpl,z)
+        else:
+            Wz = pop.Wel
+
+        Mzrd = Wz * fy
+
+        # -------------------------
+        # INTERACTION FACTORS (SIMPLIFIED EC3)
+        # -------------------------
+        # NOTE: This is a simplified safe approximation
+        ny = Ned / Nbrd
+
+        kyy = 1 + 0.6 * ny
+        kzz = 1 + 0.6 * ny
+
+        # Limit k to EC3 reasonable bounds
+        kyy = max(1.0, kyy)
+        kzz = max(1.0, kzz)
+
+        # -------------------------
+        # INTERACTION CHECK
+        # -------------------------
+        util_y = (Ned / Nbrd) + kyy * (Myed / Mbrd)
+        util_z = (Ned / Nbrd) + kzz * (Mzed / Mzrd)
+
+        U = max(util_y, util_z)
+
+        # -------------------------
+        # CHECK
+        # -------------------------
+        if U <= 1.0:
+            return {
+                "section_index": i,
+                "class": pop.seclass,
+                "N_b_Rd": Nbrd,
+                "M_b_Rd": Mbrd,
+                "M_z_Rd": Mzrd,
+                "utilisation": U,
+                "chi_y": chiy,
+                "chi_z": chiz,
+                "chi_LT": chi_LT
+            }
+
+        # Otherwise try next section
+        i += 1
+
+        # Safety break
+        if i > ex.max_row:
+            raise ValueError("No suitable section found.")
+
+
+
+

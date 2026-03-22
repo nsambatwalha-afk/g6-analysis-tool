@@ -53,7 +53,8 @@ task = st.sidebar.radio(
         "Truss Analysis & Design",
         "Single Member Design",
         "Simple Beam Design",
-        "Beam Analysis & Design"
+        "Beam Analysis & Design",
+        "Beam-Column Design"
     )
 )
 
@@ -351,10 +352,7 @@ elif task == "Beam Analysis & Design":
         "Beam Condition",
         ["Rolled", "Welded"]
     )
-    latrestrain = st.selectbox(
-        "Laterally Restrained?",
-        [True, False]
-    )
+    latrestrain = st.checkbox("Laterally Restrained?")
 
     st.write("---")
 
@@ -521,3 +519,180 @@ elif task == "Beam Analysis & Design":
 
         except Exception as e:
             st.error(f"Error: {e}")
+
+# =====================================================
+# BEAM-COLUMN DESIGN
+# =====================================================
+
+elif task == "Beam-Column Design":
+
+    st.header("Beam-Column Design (Axial + Bending)")
+    steel_input_ui(True)
+
+    shape = st.selectbox(
+        "Shape",
+        ["UB","UC"]
+    )
+    truss_analysis.condition = st.selectbox(
+        "Steel Condition",
+        ["Rolled","Welded"]
+    )
+
+    st.write("---")
+    # -------------------------
+    # User Inputs
+    # -------------------------
+
+    Ned = st.number_input(
+        "Axial Force (kN)",
+        value=100.0
+    )*1000
+
+    st.write("---")
+
+    st.markdown("### About z-axis")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        M1_z = st.number_input("M1,z (kNm)", key="M1z")*1e6
+
+    with col2:
+        M2_z = st.number_input("M2,z (kNm)", key="M2z")*1e6
+
+    # --- 3D toggle
+    is_3D = st.checkbox("Enable 3D bending (y-axis moments)")
+
+    # --- Y-axis moments (only if 3D is enabled)
+    if is_3D:
+        Myed = st.number_input(
+            "Design Moment about Y (kNm)",
+            value=100.0
+        )*1e6
+        # st.markdown("### About y-axis")
+
+        # col3, col4 = st.columns(2)
+        #
+        # with col3:
+        #     M1_y = st.number_input("M1,y (kNm)", key="M1y")*1e6
+        #
+        # with col4:
+        #     M2_y = st.number_input("M2,y (kNm)", key="M2y")*1e6
+        # Myed = max(M1_y, M2_y)
+        # posseidony = Myed/min(M1_y, M2_y)
+    else:
+        Myed = 0.0
+        # posseidony = 0.0
+    Mzed = max(M1_z, M2_z)
+    C1 = 1 / (0.3 + 0.7*(posseidon**2))
+
+
+    L = st.number_input(
+        "Member Length (mm)",
+        value=3000.0
+    )
+    # lat = st.checkbox("Laterally Restrained?")
+    all_axis_diff = st.checkbox("Are restraints different for both axes?")
+    if all_axis_diff:
+        all_axis_similar = False
+        truss_analysis.endcondition = []
+        col1, col2 = st.columns(2)
+        with col1:
+            truss_analysis.endcondition.append(st.selectbox(
+                "Fixity about Z-axis",
+                ["Fixed-Fixed", "Fixed-Pinned","Pinned-Pinned","Fixed-Free"]
+            ))
+        with col2:
+            truss_analysis.endcondition.append(st.selectbox(
+                "Fixity about Y-axis",
+                ["Fixed-Fixed", "Fixed-Pinned", "Pinned-Pinned", "Fixed-Free"]
+            ))
+    else:
+        all_axis_similar = True
+        truss_analysis.endcondition = st.selectbox(
+            "Fixity about Z-axis",
+            ["Fixed-Fixed", "Fixed-Pinned", "Pinned-Pinned", "Fixed-Free"]
+        )
+    st.write("---")
+
+    # -------------------------
+    # RUN DESIGN
+    # -------------------------
+    if st.button("Design Beam-Column 🚀"):
+
+        # -------------------------
+        # SAFETY CHECKS
+        # -------------------------
+        try:
+            if M1_z == 0 or M2_z == 0:
+                st.error("Moments M1,z and M2,z must both be non-zero.")
+                st.stop()
+
+            if min(M1_z, M2_z) == 0:
+                st.error("Cannot compute moment ratio (division by zero).")
+                st.stop()
+
+            # Recompute safely
+            Mzed = max(M1_z, M2_z)
+            posseidon = Mzed / min(M1_z, M2_z)
+
+            # Clamp to avoid extreme nonsense
+            posseidon = np.clip(posseidon, 1.0, 10.0)
+
+            C1 = 1 / (0.3 + 0.7 * (posseidon**2))
+
+            # -------------------------
+            # CALL DESIGN FUNCTION
+            # -------------------------
+            result = truss_analysis.beam_column(
+                L=L,
+                Ned=Ned,
+                Mzed=Mzed,
+                Myed=Myed,
+                shape=shape,
+                C1=C1,
+                lat=True,
+                all_axis_similar=all_axis_similar
+            )
+
+            # -------------------------
+            # DISPLAY RESULTS
+            # -------------------------
+            st.success("✅ Suitable section found!")
+
+            st.write("### 📊 Results")
+
+            st.write(f"**Section Index:** {result['section_index']}")
+            st.write(f"**Cross-section Class:** {result['class']}")
+
+            st.write("---")
+
+            st.write("### 🧱 Resistances")
+
+            st.write(f"N_b,Rd = {result['N_b_Rd']/1000:.2f} kN")
+            st.write(f"M_b,Rd = {result['M_b_Rd']/1e6:.2f} kNm")
+            st.write(f"M_z,Rd = {result['M_z_Rd']/1e6:.2f} kNm")
+
+            st.write("---")
+
+            st.write("### ⚙️ Stability Factors")
+
+            st.write(f"χ_y = {result['chi_y']:.3f}")
+            st.write(f"χ_z = {result['chi_z']:.3f}")
+            st.write(f"χ_LT = {result['chi_LT']:.3f}")
+
+            st.write("---")
+
+            st.write("### 🎯 Utilisation")
+
+            U = result["utilisation"]
+
+            if U <= 1:
+                st.success(f"✅ Utilisation = {U:.3f} (SAFE)")
+            else:
+                st.error(f"❌ Utilisation = {U:.3f} (FAIL)")
+
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+
+
