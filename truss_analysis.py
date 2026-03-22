@@ -943,7 +943,8 @@ def eff_L(L, endcondition):
         return None
 
 class Section:
-    def __init__(self, A, Iy, Iz, Wpl, Wel, Iw, It, tw, h, tf, b, iz, seclass, alphay, alphaz):
+    def __init__(self, designation, A, Iy, Iz, Wpl, Wel, Iw, It, tw, h, tf, b, iz, seclass=None, alphay=None, alphaz=None):
+        self.designation = designation
         self.A = A
         self.Iy = Iy
         self.Iz = Iz
@@ -970,6 +971,7 @@ def beam_column_table(shape, i):
         i = max(i, 17)
     elif shape == "UC":
         ex = openpyxl.load_workbook("UC-2.xlsx").active
+    designation = ex.cell(row=i, column=1).value
     A = float(ex.cell(row=i, column=14).value)
     Iy = float(ex.cell(row=i, column=2).value) * 10000
     Iz = float(ex.cell(row=i, column=3).value) * 10000
@@ -1010,7 +1012,7 @@ def beam_column_table(shape, i):
 
 
 
-    outer = Section(A, Iy, Iz, Wpl, Wel, Iw, It, tw, h,tf, b, iz)
+    outer = Section(designation, A, Iy, Iz, Wpl, Wel, Iw, It, tw, h,tf, b, iz)
     outer.alphay = alphay
     outer.alphaz = alphaz
     return outer
@@ -1131,7 +1133,7 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         # -------------------------
         if U <= 1.0:
             return {
-                "section_index": i,
+                "Designation": pop.designation,
                 "class": pop.seclass,
                 "N_b_Rd": Nbrd,
                 "M_b_Rd": Mbrd,
