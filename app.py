@@ -352,7 +352,7 @@ elif task == "Beam Analysis & Design":
         "Beam Condition",
         ["Rolled", "Welded"]
     )
-    latrestrain = st.checkbox("Laterally Restrained?")
+    latrestrain = st.checkbox("Provide Lateral Restraint")
 
     st.write("---")
 
@@ -454,7 +454,7 @@ elif task == "Beam Analysis & Design":
 
                 if load[0] == "point":
                     _, P, x = load
-                    beam.add_loads(PointLoad(-P * 1000, x))  # kN → N
+                    beam.add_loads(PointLoad(-P * 1000, x, 90))  # kN → N
 
                 elif load[0] == "udl":
                     _, w, a, b = load
