@@ -1025,8 +1025,8 @@ def beam_column_table(shape, i):
     return outer
 
 
-def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
-    global condition, grade
+def beam_column(L, Ned, Mzed, Myed, shape, C1, endcondition, grade, all_axis_similar=True):
+    global condition, grades
     grades = openpyxl.load_workbook("grades.xlsx").active
 
     for i in range(2, 10):
@@ -1051,32 +1051,32 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         ex = openpyxl.load_workbook("UC-2.xlsx").active
     else:
         raise ValueError("Unknown shape")
-    A0 = Ned/fy
+    A0 = Ned / fy
     A = 0.0
     while True:
-        while not A>A0:
+        while not A > A0:
             i += 1
             A = float(ex.cell(row=i, column=14).value)
         pop = beam_column_table(shape, i)
-        pop.seclass = section_class(fy,pop,Ned)
+        pop.seclass = section_class(fy, pop, Ned)
         if pop.seclass == 1 or pop.seclass == 2:
-            Nrd = (pop.A*fy)
-            Mrd = pop.Wpl*fy
+            Nrd = (pop.A * fy)
+            Mrd = pop.Wpl * fy
         elif pop.seclass == 3:
-            Nrd = (pop.A*fy)
-            Mrd = pop.Wel*fy
+            Nrd = (pop.A * fy)
+            Mrd = pop.Wel * fy
         elif pop.seclass == 4:
             i += 1
             continue
-        Ncry = ((np.pi**2)*E*pop.Iy)/(Lcry**2)
-        Ncrz = ((np.pi**2)*E*pop.Iz)/(Lcrz**2)
-        lamy = np.sqrt((pop.A*fy)/Ncry)
-        lamz = np.sqrt((pop.A*fy)/Ncrz)
-        phiy = 0.5 * (1+pop.alphay*(lamy-0.2)+(lamy**2))
-        phiz = 0.5 * (1+pop.alphaz*(lamz-0.2)+(lamz**2))
-        chiy = 1 / (phiy + np.sqrt(phiy**2 - lamy**2))
-        chiz = 1 / (phiz + np.sqrt(phiz**2 - lamz**2))
-        term2 = (pop.A*fy)
+        Ncry = ((np.pi ** 2) * E * pop.Iy) / (Lcry ** 2)
+        Ncrz = ((np.pi ** 2) * E * pop.Iz) / (Lcrz ** 2)
+        lamy = np.sqrt((pop.A * fy) / Ncry)
+        lamz = np.sqrt((pop.A * fy) / Ncrz)
+        phiy = 0.5 * (1 + pop.alphay * (lamy - 0.2) + (lamy ** 2))
+        phiz = 0.5 * (1 + pop.alphaz * (lamz - 0.2) + (lamz ** 2))
+        chiy = 1 / (phiy + np.sqrt(phiy ** 2 - lamy ** 2))
+        chiz = 1 / (phiz + np.sqrt(phiz ** 2 - lamz ** 2))
+        term2 = (pop.A * fy)
         chi = min(chiy, chiz)
         Nbrd = chi * term2
         # -------------------------
@@ -1084,9 +1084,9 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         # -------------------------
         LcrLT = Lcry  # assumption (you can refine later)
 
-        Mcr = C1 * ((np.pi**2 * E * pop.Iz) / (LcrLT**2)) * np.sqrt(
+        Mcr = C1 * ((np.pi ** 2 * E * pop.Iz) / (LcrLT ** 2)) * np.sqrt(
             (pop.Iw / pop.Iz) +
-            ((LcrLT**2 * G * pop.It) / (np.pi**2 * E * pop.Iz))
+            ((LcrLT ** 2 * G * pop.It) / (np.pi ** 2 * E * pop.Iz))
         )
 
         # Select correct section modulus
@@ -1100,8 +1100,8 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         # LTB imperfection factor (Eurocode typical for rolled I-sections)
         alpha_LT = 0.34
 
-        phi_LT = 0.5 * (1 + alpha_LT * (lamLT - 0.2) + lamLT**2)
-        chi_LT = 1 / (phi_LT + np.sqrt(phi_LT**2 - lamLT**2))
+        phi_LT = 0.5 * (1 + alpha_LT * (lamLT - 0.2) + lamLT ** 2)
+        chi_LT = 1 / (phi_LT + np.sqrt(phi_LT ** 2 - lamLT ** 2))
 
         Mbrd = chi_LT * Wy * fy
 
@@ -1115,26 +1115,104 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
 
         Mzrd = Wz * fy
 
-        # -------------------------
-        # INTERACTION FACTORS (SIMPLIFIED EC3)
-        # -------------------------
-        # NOTE: This is a simplified safe approximation
-        ny = Ned / Nbrd
+        # ===================== MODIFIED INTERACTION FACTORS =====================
+        # Calculate interaction factors according to Eurocode 3 Annex B
 
-        kyy = 1 + 0.6 * ny
-        kzz = 1 + 0.6 * ny
+        # 1. Calculate C_m factors (moment distribution factors)
+        # Assuming uniform moment distribution (most conservative)
+        # For more accurate values, you'd need moment diagram information
+        psi_y = 1.0  # Ratio of end moments (1.0 = uniform moment)
+        psi_z = 1.0
 
-        # Limit k to EC3 reasonable bounds
-        kyy = max(1.0, kyy)
-        kzz = max(1.0, kzz)
+        C_my = max(0.4, 0.6 + 0.4 * psi_y)
+        C_mz = max(0.4, 0.6 + 0.4 * psi_z)
+        C_mz = C1
+        C_mLT = max(0.4, 0.6 + 0.4 * psi_z)
+        C_mLT = C1
 
-        # -------------------------
-        # INTERACTION CHECK
-        # -------------------------
-        util_y = (Ned / Nbrd) + kyy * (Myed / Mbrd)
-        util_z = (Ned / Nbrd) + kzz * (Mzed / Mzrd)
+        # 2. Calculate normalized axial force
+        # Note: Using N_Rk = Nrd (plastic resistance)
+        N_Rk = Nrd
+        gamma_M1 = 1.0  # Partial safety factor (use appropriate value from material specs)
 
-        U = max(util_y, util_z)
+        # Calculate n_y and n_z using the appropriate reduction factors
+        n_y = Ned / (chiy * N_Rk / gamma_M1) if chiy > 0 else 0
+        n_z = Ned / (chiz * N_Rk / gamma_M1) if chiz > 0 else 0
+
+        # 3. Calculate interaction factors based on section class
+        if pop.seclass in [1, 2]:  # Class 1 or 2 sections
+            # k_yy - Formula from Table B.1
+            term1 = 1 + (lamy - 0.2) * n_y
+            term2 = 1 + 0.8 * n_y
+            k_yy = C_my * min(term1, term2)
+
+            # k_zz
+            term1_z = 1 + (2 * lamz - 0.6) * n_z
+            term2_z = 1 + 1.4 * n_z
+            k_zz = C_mz * min(term1_z, term2_z)
+
+            # k_yz for Class 1/2 sections
+            k_yz = 0.6 * k_zz
+
+            # k_zy for Class 1/2 sections
+            if lamy < 0.4:
+                k_zy = 0.6 * k_yy
+            else:
+                denominator = max(C_mLT - 0.25, 0.01)
+                k_zy = 1 - (0.1 * lamz) / denominator * n_z
+                k_zy = max(k_zy, 0.6 * k_yy)
+
+        elif pop.seclass == 3:  # Class 3 sections
+            # k_yy - same as Class 1/2 but with limits
+            term1 = 1 + (0.6*lamy) * n_y
+            term2 = 1 + 0.6 * n_y
+            k_yy = C_my * min(term1, term2)
+
+            # k_zz
+            term1_z = 1 + (0.6 * lamz ) * n_z
+            k_zz = C_mz * min(term1_z, term2_z)
+
+            # For Class 3 sections, k_yz and k_zy from Table B.1
+            if lamz < 0.4:
+                k_yz = k_zz
+            else:
+                k_yz = k_zz
+
+            if lamy < 0.4:
+                k_zy = 0.8 * k_zz
+            else:
+                if lamz < 0.4:
+                    k_zy = 0.6 + lamz
+                else:
+                    denominator = max(C_mLT - 0.25, 0.01)
+                    k_zy = 1 - (0.05 * lamz) / denominator * n_z
+                    k_zy = max(k_zy, 0.6 * k_zz)
+
+        else:  # Class 4 sections - use conservative approach
+            k_yy = 1 + 0.6 * n_y
+            k_zz = 1 + 0.6 * n_z
+            k_yz = 0.6 * k_zz
+            k_zy = 0.6 * k_yy
+
+        # Ensure factors are within reasonable bounds
+        k_yy = max(0.1, min(k_yy, 2.0))
+        k_zz = max(0.1, min(k_zz, 2.0))
+        k_yz = max(0.1, min(k_yz, 2.0))
+        k_zy = max(0.1, min(k_zy, 2.0))
+
+        # 4. Apply interaction checks with the new factors
+        # Check for major axis bending with LTB
+        util_y = (Ned / Nbrd) + k_yy * (Myed / Mbrd) + k_yz * (Mzed / Mzrd)
+
+        # Check for minor axis bending
+        util_z = (Ned / Nbrd) + k_zy * (Myed / Mbrd) + k_zz * (Mzed / Mzrd)
+
+        # Also check the simplified Eurocode 3 interaction (optional, for verification)
+        util_simple = (Ned / Nbrd) + 1.0 * (Myed / Mbrd) + 0.6 * (Mzed / Mzrd)
+
+        # Take the maximum utilization from all checks
+        U = max(util_y, util_z, util_simple)
+        # ===================== END MODIFIED SECTION =====================
 
         # -------------------------
         # CHECK
@@ -1149,7 +1227,16 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
                 "utilisation": U,
                 "chi_y": chiy,
                 "chi_z": chiz,
-                "chi_LT": chi_LT
+                "chi_LT": chi_LT,
+                # Add interaction factors to output for verification
+                "k_yy": k_yy,
+                "k_zz": k_zz,
+                "k_yz": k_yz,
+                "k_zy": k_zy,
+                "C_my": C_my,
+                "C_mz": C_mz,
+                "util_y": util_y,
+                "util_z": util_z
             }
 
         # Otherwise try next section
