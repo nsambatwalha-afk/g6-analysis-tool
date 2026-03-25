@@ -1169,7 +1169,8 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
             k_yy = C_my * min(term1, term2)
 
             # k_zz
-            term1_z = 1 + (0.6 * lamz ) * n_z
+            term1_z = 1 + (0.6 * lamz) * n_z
+            term2_z = 1 + 0.6 * n_z
             k_zz = C_mz * min(term1_z, term2_z)
 
             # For Class 3 sections, k_yz and k_zy from Table B.1
