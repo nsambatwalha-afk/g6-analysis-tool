@@ -1025,8 +1025,8 @@ def beam_column_table(shape, i):
     return outer
 
 
-def beam_column(L, Ned, Mzed, Myed, shape, C1, endcondition, grade, all_axis_similar=True):
-    global condition, grades
+def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
+    global condition, grade
     grades = openpyxl.load_workbook("grades.xlsx").active
 
     for i in range(2, 10):
