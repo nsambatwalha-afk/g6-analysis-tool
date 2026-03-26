@@ -471,6 +471,9 @@ elif task == "Beam Analysis & Design":
             M = beam.get_bending_moment(return_absmax=True) / 1000  # → kNm
             V = beam.get_shear_force(return_absmax=True) / 1000     # → kN
 
+            fig = beam.plot_beam_diagram()
+            st.pyplot(fig)
+
             st.info(f"Max Moment = {round(M,2)} kNm")
             st.info(f"Max Shear = {round(V,2)} kN")
 
