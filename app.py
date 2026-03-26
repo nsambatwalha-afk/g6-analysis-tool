@@ -374,7 +374,7 @@ elif task == "Beam Analysis & Design":
         col1, col2 = st.columns(2)
 
         with col1:
-            x = st.number_input(f"Support {i+1} Position (m)", key=f"sx_new{i}", value= i*10.0)
+            x = st.number_input(f"Support {i+1} Position (m)", key=f"sx_new{i}")
 
         with col2:
             typ = st.selectbox(
