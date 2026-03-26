@@ -555,10 +555,10 @@ elif task == "Beam-Column Design":
     col1, col2 = st.columns(2)
 
     with col1:
-        M1_z = st.number_input("M1,z (kNm)", key="M1z")*1e6
+        M1_z = st.number_input("M1,z (kNm)", key="M1z", value = 100.0)*1e6
 
     with col2:
-        M2_z = st.number_input("M2,z (kNm)", key="M2z")*1e6
+        M2_z = st.number_input("M2,z (kNm)", key="M2z", value = 0.02)*1e6
 
     # --- 3D toggle
     is_3D = st.checkbox("Enable 3D bending (y-axis moments)")
