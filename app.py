@@ -51,7 +51,7 @@ task = st.sidebar.radio(
         "Matrix Multiplication",
         "Gauss-Jordan Elimination",
         "Truss Analysis & Design",
-        "Single Member Design",
+        "Single Truss Member Design",
         "Simple Beam Design",
         "Beam Analysis & Design",
         "Beam-Column Design"
@@ -218,7 +218,7 @@ elif task == "Truss Analysis & Design":
 
             st.error(f"Analysis error: {e}")
 
-elif task == "Single Member Design":
+elif task == "Single Truss Member Design":
 
     st.header("Single Member Steel Design")
 
