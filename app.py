@@ -4,6 +4,7 @@ import pandas as pd
 import libfunc
 import truss_analysis
 from indeterminatebeam import *
+import matplotlib.pyplot as plt
 
 def steel_input_ui(val=False):
     if not val:
@@ -472,7 +473,8 @@ elif task == "Beam Analysis & Design":
             V = beam.get_shear_force(return_absmax=True) / 1000     # → kN
 
             fig = beam.plot_beam_diagram()
-            st.pyplot(fig.show)
+            st.pyplot(plt.gcf())
+            plt.close()
 
             st.info(f"Max Moment = {round(M,2)} kNm")
             st.info(f"Max Shear = {round(V,2)} kN")
