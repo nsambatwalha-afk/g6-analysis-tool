@@ -472,6 +472,7 @@ elif task == "Beam Analysis & Design":
             M = beam.get_bending_moment(return_absmax=True) / 1000  # → kNm
             V = beam.get_shear_force(return_absmax=True) / 1000     # → kN
 
+            plt.figure()
             fig = beam.plot_beam_diagram()
             st.pyplot(plt.gcf())
             plt.close()
