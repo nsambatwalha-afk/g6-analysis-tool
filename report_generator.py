@@ -1235,21 +1235,33 @@ def frame_design_report(
     col_endcondition: str,
     member_analysis: dict,   # {mid: {"N_start",...,"type","length",...}}
     member_design: dict,     # {mid: design-result dict}
-    nodes,
-    members,
-    supports,
-    node_loads,
-    udl_loads,
+    member_effective_types: dict = None,  # {mid: "Beam"|"Beam-Column"|"Column"}
+    nodes=None,
+    members=None,
+    supports=None,
+    node_loads=None,
+    udl_loads=None,
 ) -> io.BytesIO:
     """
     Generate a formatted Excel results sheet for the Frame Analysis & Design task.
 
     member_design values are either the dict returned by restrained_beam (for beams)
-    or the dict returned by beam_column (for columns).
+    or the dict returned by beam_column (for columns / beam-columns).
+    member_effective_types maps each member ID to its actual design category after
+    automatic beam-column reclassification.
     """
     wb, ws, row = _new_wb("Frame Analysis & Design — Results Sheet (EC3)")
 
     fy, fu = get_grade_props(grade)
+
+    # Normalise effective types – fall back to the user-specified analysis type
+    # for any member not explicitly recorded (backward-compat with old sessions).
+    if member_effective_types is None:
+        member_effective_types = {}
+    _eff = {
+        mid: member_effective_types.get(mid, res["type"])
+        for mid, res in member_analysis.items()
+    }
 
     # ── DESIGN INPUTS ─────────────────────────────────────────────────────
     row = _section(ws, row, "DESIGN INPUTS")
@@ -1352,11 +1364,25 @@ def frame_design_report(
     row = _step(ws, row, "",
                 "Interaction (EC3 Eq. 6.61): N/N_b,Rd + k_yy × M_y/M_b,Rd + k_yz × M_z/M_z,Rd ≤ 1.0",
                 "", "")
+    row = _step(ws, row, "Beam-Columns",
+                "Members with significant N and M — designed to EC3 §6.3.3.",
+                "", "")
+    row = _step(ws, row, "",
+                "Axial buckling:  N_b,Rd = χ × A × f_y / γ_M1   [γ_M1 = 1.0]",
+                "", "")
+    row = _step(ws, row, "",
+                "LTB resistance:  M_b,Rd = χ_LT × W_pl,y × f_y / γ_M1",
+                "", "")
+    row = _step(ws, row, "",
+                "Interaction (EC3 Eq. 6.61): N/N_b,Rd + k_yy × M_y/M_b,Rd + k_yz × M_z/M_z,Rd ≤ 1.0",
+                "", "")
+    row = _step(ws, row, "",
+                "Interaction (EC3 Eq. 6.62): N/N_b,Rd + k_zy × M_y/M_b,Rd + k_zz × M_z/M_z,Rd ≤ 1.0",
+                "", "")
     row = _blank(ws, row)
 
     # ── DESIGN RESULTS — BEAMS ────────────────────────────────────────────
-    beam_mids = [mid for mid, res in member_analysis.items()
-                 if res["type"] == "Beam" and mid in member_design]
+    beam_mids = [mid for mid in member_design if _eff.get(mid) == "Beam"]
     if beam_mids:
         row = _section(ws, row, "DESIGN RESULTS — Beams (UB sections)")
         row = _step(ws, row, "Member", "Section", "M_Rd (kNm)  /  M_Ed (kNm)",
@@ -1380,9 +1406,45 @@ def frame_design_report(
                               passed_str, ok)
         row = _blank(ws, row)
 
+    # ── DESIGN RESULTS — BEAM-COLUMNS ─────────────────────────────────────
+    bc_mids = [mid for mid in member_design if _eff.get(mid) == "Beam-Column"]
+    if bc_mids:
+        row = _section(ws, row,
+                       "DESIGN RESULTS — Beam-Columns (UB sections, EC3 §6.3.3)")
+        row = _step(ws, row, "Note",
+                    "These members were specified as Beams but carry significant "
+                    "axial force alongside bending and have been automatically "
+                    "reclassified as Beam-Columns.",
+                    "", "")
+        row = _step(ws, row, "Member", "Section",
+                    "N_b,Rd (kN)  |  N_Ed (kN)  |  M_Ed (kNm)  |  Class",
+                    "Utilisation  |  χ_y  |  χ_z  |  χ_LT  |  Status")
+        for mid in bc_mids:
+            dr    = member_design[mid]
+            ar    = member_analysis[mid]
+            N_Ed  = max(abs(ar["N_start"]), abs(ar["N_end"]))
+            M_Ed  = max(abs(ar["M_start"]), abs(ar["M_end"]))
+            U     = dr.get("utilisation", 0.0)
+            ok    = U <= 1.0
+            size  = dr.get("Designation", "—")
+            Nbrd  = dr.get("N_b_Rd", 0.0)
+            cls   = dr.get("class", "—")
+            chiy  = dr.get("chi_y",  0.0)
+            chiz  = dr.get("chi_z",  0.0)
+            chiLT = dr.get("chi_LT", 0.0)
+            n_str = (f"N_b,Rd={_fmt(Nbrd/1000,2)} kN | N_Ed={_fmt(N_Ed,2)} kN | "
+                     f"M_Ed={_fmt(M_Ed,2)} kNm | Class {cls}")
+            u_str = (f"U={_fmt(U,3)} | χ_y={_fmt(chiy,3)} | "
+                     f"χ_z={_fmt(chiz,3)} | χ_LT={_fmt(chiLT,3)}")
+            row = _step(ws, row, f"Member {mid}", size, n_str, u_str)
+            passed_str = "PASS ✓" if ok else "FAIL ✗"
+            row = _result_row(ws, row,
+                              f"Member {mid} — {size}  |  Utilisation {_fmt(U,3)}",
+                              passed_str, ok)
+        row = _blank(ws, row)
+
     # ── DESIGN RESULTS — COLUMNS ──────────────────────────────────────────
-    col_mids = [mid for mid, res in member_analysis.items()
-                if res["type"] == "Column" and mid in member_design]
+    col_mids = [mid for mid in member_design if _eff.get(mid) == "Column"]
     if col_mids:
         row = _section(ws, row, "DESIGN RESULTS — Columns (UC sections)")
         row = _step(ws, row, "Member", "Section",
