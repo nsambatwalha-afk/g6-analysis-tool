@@ -1,11 +1,12 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import libfunc
 import truss_analysis
 import report_generator
+import section_visualizer
 from indeterminatebeam import *
-# import matplotlib.pyplot as plt
 
 def steel_input_ui(val=False):
     if not val:
@@ -40,6 +41,14 @@ def steel_input_ui(val=False):
     else:
         st.subheader("Steel Properties")
         truss_analysis.grade = st.selectbox("Steel Grade", ["S235", "S275", "S355", "S420", "S450", "S460"])
+
+
+def _show_section_figure(fig, header="📐 Section Visualization"):
+    """Display a section cross-section figure produced by section_visualizer."""
+    if fig is not None:
+        st.subheader(header)
+        st.pyplot(fig, use_container_width=False)
+        plt.close(fig)
 
 
 st.set_page_config(page_title="Structural Engineering Toolkit", layout="wide")
@@ -235,12 +244,11 @@ elif task == "Truss Analysis & Design":
 
             else:
                 # Build & offer results sheet — re-use global state already set by run_analysis_and_design_table
-                import truss_analysis as _ta
-                _NSC, _NDOF = _ta.assign_structure_coordinates()
-                _S = _ta.generate_stiffness_matrix(_NSC, _NDOF)
-                _P = _ta.form_load_vector(_NSC, _NDOF)
-                _D = _ta.solve_displacements(_S, _P)
-                _mforces = _ta.calculate_member_forces(_NSC, _D)
+                _NSC, _NDOF = truss_analysis.assign_structure_coordinates()
+                _S = truss_analysis.generate_stiffness_matrix(_NSC, _NDOF)
+                _P = truss_analysis.form_load_vector(_NSC, _NDOF)
+                _D = truss_analysis.solve_displacements(_S, _P)
+                _mforces = truss_analysis.calculate_member_forces(_NSC, _D)
 
                 report_bytes = report_generator.truss_report(
                     member_forces=_mforces,
@@ -263,6 +271,51 @@ elif task == "Truss Analysis & Design":
                     file_name="truss_analysis_results.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
+                # ---- Section Visualizations ----
+                st.subheader("📐 Section Visualizations")
+                vis_cols = st.columns(2)
+
+                if tension_table is not None and not tension_table.empty:
+                    # Pick a representative tension section from the first member
+                    first_ten = tension_table.iloc[0]
+                    rep_ten_section = truss_analysis.ten_designer(abs(float(first_ten["Force (kN)"])) * 1000)
+                    if rep_ten_section is not None:
+                        with vis_cols[0]:
+                            st.markdown(f"**Tension ({truss_analysis.shapeten})**")
+                            fig_t = section_visualizer.visualize_tension_section(
+                                truss_analysis.shapeten, rep_ten_section,
+                                grade=truss_analysis.grade,
+                                info_text=f"Shape: {first_ten['Size']}"
+                            )
+                            if fig_t is not None:
+                                st.pyplot(fig_t, use_container_width=False)
+                                plt.close(fig_t)
+
+                if compression_table is not None and not compression_table.empty:
+                    first_comp = compression_table.iloc[0]
+                    _mlens = truss_analysis.calculate_member_lengths()
+                    # find member id from label "Member X"
+                    try:
+                        _mid = int(str(first_comp["Member"]).split()[-1])
+                        _clen = _mlens.get(_mid, 3000.0)
+                    except Exception:
+                        _clen = 3000.0
+                    rep_comp_section = truss_analysis.comp_designer(
+                        abs(float(first_comp["Force (kN)"])) * 1000, _clen
+                    )
+                    if rep_comp_section is not None:
+                        col_idx = 1 if (tension_table is not None and not tension_table.empty) else 0
+                        with vis_cols[col_idx]:
+                            st.markdown(f"**Compression ({truss_analysis.shapecomp})**")
+                            fig_c = section_visualizer.visualize_compression_section(
+                                truss_analysis.shapecomp, rep_comp_section,
+                                grade=truss_analysis.grade,
+                                info_text=f"Shape: {first_comp['Size']}"
+                            )
+                            if fig_c is not None:
+                                st.pyplot(fig_c, use_container_width=False)
+                                plt.close(fig_c)
 
         except Exception as e:
 
@@ -347,6 +400,14 @@ elif task == "Single Truss Member Design":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
+                    _show_section_figure(
+                        section_visualizer.visualize_tension_section(
+                            truss_analysis.shapeten, section,
+                            grade=truss_analysis.grade,
+                            info_text=f"Axial force: {force:.1f} kN (Tension)"
+                        )
+                    )
+
             else:
 
                 section = truss_analysis.comp_designer(force * 1000, length)
@@ -380,6 +441,18 @@ elif task == "Single Truss Member Design":
                         data=report_bytes,
                         file_name="compression_design_results.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+                    _show_section_figure(
+                        section_visualizer.visualize_compression_section(
+                            truss_analysis.shapecomp, section,
+                            grade=truss_analysis.grade,
+                            info_text=(
+                                f"Axial force: {force:.1f} kN (Compression) | "
+                                f"χ = {section['chi']:.3f} | "
+                                f"Utilization: {round((force / (section['NbRd'] / 1000)) * 100, 1):.1f}%"
+                            )
+                        )
                     )
 
         except Exception as e:
@@ -443,6 +516,18 @@ elif task == "Simple Beam Design":
                 data=report_bytes,
                 file_name="beam_design_results.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            _show_section_figure(
+                section_visualizer.visualize_beam_section(
+                    result["Size"],
+                    grade=truss_analysis.grade,
+                    beam_type=beam_type + " Beam",
+                    info_text=(
+                        f"M = {M:.1f} kNm | V = {V:.1f} kN | "
+                        f"Utilization: {result.get('Utilization (%)', '—')}%"
+                    )
+                )
             )
 
         except Exception as e:
@@ -648,6 +733,19 @@ elif task == "Beam Analysis & Design":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+            beam_label = "Restrained Beam" if latrestrain else "Unrestrained Beam"
+            _show_section_figure(
+                section_visualizer.visualize_beam_section(
+                    result["Size"],
+                    grade=truss_analysis.grade,
+                    beam_type=beam_label,
+                    info_text=(
+                        f"M = {round(M, 2):.2f} kNm | V = {round(V, 2):.2f} kN | "
+                        f"Span = {L:.1f} m"
+                    )
+                )
+            )
+
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -838,6 +936,18 @@ elif task == "Beam-Column Design":
                 data=report_bytes,
                 file_name="beam_column_design_results.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            _show_section_figure(
+                section_visualizer.visualize_beam_column_section(
+                    result["Designation"],
+                    shape=shape,
+                    grade=truss_analysis.grade,
+                    info_text=(
+                        f"N = {Ned/1000:.1f} kN | M_z = {Mzed/1e6:.1f} kNm | "
+                        f"Utilisation = {U:.3f} | Class {result['class']}"
+                    )
+                )
             )
 
         except Exception as e:
