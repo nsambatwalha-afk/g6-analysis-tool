@@ -1,12 +1,12 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import libfunc
 import truss_analysis
 import report_generator
 import section_visualizer
 from indeterminatebeam import *
-# import matplotlib.pyplot as plt
 
 def steel_input_ui(val=False):
     if not val:
@@ -48,7 +48,6 @@ def _show_section_figure(fig, header="📐 Section Visualization"):
     if fig is not None:
         st.subheader(header)
         st.pyplot(fig, use_container_width=False)
-        import matplotlib.pyplot as plt
         plt.close(fig)
 
 
@@ -245,12 +244,11 @@ elif task == "Truss Analysis & Design":
 
             else:
                 # Build & offer results sheet — re-use global state already set by run_analysis_and_design_table
-                import truss_analysis as _ta
-                _NSC, _NDOF = _ta.assign_structure_coordinates()
-                _S = _ta.generate_stiffness_matrix(_NSC, _NDOF)
-                _P = _ta.form_load_vector(_NSC, _NDOF)
-                _D = _ta.solve_displacements(_S, _P)
-                _mforces = _ta.calculate_member_forces(_NSC, _D)
+                _NSC, _NDOF = truss_analysis.assign_structure_coordinates()
+                _S = truss_analysis.generate_stiffness_matrix(_NSC, _NDOF)
+                _P = truss_analysis.form_load_vector(_NSC, _NDOF)
+                _D = truss_analysis.solve_displacements(_S, _P)
+                _mforces = truss_analysis.calculate_member_forces(_NSC, _D)
 
                 report_bytes = report_generator.truss_report(
                     member_forces=_mforces,
@@ -281,8 +279,7 @@ elif task == "Truss Analysis & Design":
                 if tension_table is not None and not tension_table.empty:
                     # Pick a representative tension section from the first member
                     first_ten = tension_table.iloc[0]
-                    import truss_analysis as _ta2
-                    rep_ten_section = _ta2.ten_designer(abs(float(first_ten["Force (kN)"])) * 1000)
+                    rep_ten_section = truss_analysis.ten_designer(abs(float(first_ten["Force (kN)"])) * 1000)
                     if rep_ten_section is not None:
                         with vis_cols[0]:
                             st.markdown(f"**Tension ({truss_analysis.shapeten})**")
@@ -292,22 +289,19 @@ elif task == "Truss Analysis & Design":
                                 info_text=f"Shape: {first_ten['Size']}"
                             )
                             if fig_t is not None:
-                                import matplotlib.pyplot as _plt
                                 st.pyplot(fig_t, use_container_width=False)
-                                _plt.close(fig_t)
+                                plt.close(fig_t)
 
                 if compression_table is not None and not compression_table.empty:
                     first_comp = compression_table.iloc[0]
-                    import truss_analysis as _ta3
-                    from truss_analysis import calculate_member_lengths as _cml
-                    _mlens = _cml()
+                    _mlens = truss_analysis.calculate_member_lengths()
                     # find member id from label "Member X"
                     try:
                         _mid = int(str(first_comp["Member"]).split()[-1])
                         _clen = _mlens.get(_mid, 3000.0)
                     except Exception:
                         _clen = 3000.0
-                    rep_comp_section = _ta3.comp_designer(
+                    rep_comp_section = truss_analysis.comp_designer(
                         abs(float(first_comp["Force (kN)"])) * 1000, _clen
                     )
                     if rep_comp_section is not None:
@@ -320,9 +314,8 @@ elif task == "Truss Analysis & Design":
                                 info_text=f"Shape: {first_comp['Size']}"
                             )
                             if fig_c is not None:
-                                import matplotlib.pyplot as _plt2
                                 st.pyplot(fig_c, use_container_width=False)
-                                _plt2.close(fig_c)
+                                plt.close(fig_c)
 
         except Exception as e:
 
@@ -532,7 +525,7 @@ elif task == "Simple Beam Design":
                     beam_type=beam_type + " Beam",
                     info_text=(
                         f"M = {M:.1f} kNm | V = {V:.1f} kN | "
-                        f"Utilization: {result.get('Utilization (%)', result.get('Utilization (%)', '—'))}%"
+                        f"Utilization: {result.get('Utilization (%)', '—')}%"
                     )
                 )
             )
