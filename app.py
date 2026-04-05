@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import libfunc
 import truss_analysis
+import report_generator
 from indeterminatebeam import *
 # import matplotlib.pyplot as plt
 
@@ -80,6 +81,14 @@ if task == "Matrix Multiplication":
                 result = libfunc.multiplier(arg1, arg2)
                 st.success("Result:")
                 st.write(result)
+
+                report_bytes = report_generator.matrix_mult_report(arg1, arg2, result)
+                st.download_button(
+                    label="📥 Download Results Sheet",
+                    data=report_bytes,
+                    file_name="matrix_multiplication_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             else:
                 st.error("Incompatible matrices.")
 
@@ -100,10 +109,19 @@ elif task == "Gauss-Jordan Elimination":
 
         try:
             arg = np.matrix(aug)
+            aug_copy = arg.copy()
             solution = libfunc.solver(arg)
 
             st.success("Solution:")
             st.write(solution)
+
+            report_bytes = report_generator.gauss_jordan_report(aug_copy)
+            st.download_button(
+                label="📥 Download Results Sheet",
+                data=report_bytes,
+                file_name="gauss_jordan_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
         except Exception as e:
             st.error(f"Error: {e}")
@@ -215,6 +233,37 @@ elif task == "Truss Analysis & Design":
             ):
                 st.warning("No members required design.")
 
+            else:
+                # Build & offer results sheet — re-use global state already set by run_analysis_and_design_table
+                import truss_analysis as _ta
+                _NSC, _NDOF = _ta.assign_structure_coordinates()
+                _S = _ta.generate_stiffness_matrix(_NSC, _NDOF)
+                _P = _ta.form_load_vector(_NSC, _NDOF)
+                _D = _ta.solve_displacements(_S, _P)
+                _mforces = _ta.calculate_member_forces(_NSC, _D)
+
+                report_bytes = report_generator.truss_report(
+                    member_forces=_mforces,
+                    tension_table=tension_table,
+                    compression_table=compression_table,
+                    grade=truss_analysis.grade,
+                    shapeten=truss_analysis.shapeten,
+                    shapecomp=truss_analysis.shapecomp,
+                    jointing=truss_analysis.jointing,
+                    nh=truss_analysis.nh,
+                    d=truss_analysis.d,
+                    stag=truss_analysis.stag,
+                    s=truss_analysis.s,
+                    p=truss_analysis.p,
+                    ngs=truss_analysis.ngs,
+                )
+                st.download_button(
+                    label="📥 Download Results Sheet",
+                    data=report_bytes,
+                    file_name="truss_analysis_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
         except Exception as e:
 
             st.error(f"Analysis error: {e}")
@@ -278,6 +327,26 @@ elif task == "Single Truss Member Design":
                     st.success("Design Result")
                     st.dataframe(df)
 
+                    report_bytes = report_generator.tension_design_report(
+                        force_N=force * 1000,
+                        grade=truss_analysis.grade,
+                        shapeten=truss_analysis.shapeten,
+                        section=section,
+                        jointing=truss_analysis.jointing,
+                        nh=truss_analysis.nh,
+                        d=truss_analysis.d,
+                        stag=truss_analysis.stag,
+                        s=truss_analysis.s,
+                        p=truss_analysis.p,
+                        ngs=truss_analysis.ngs,
+                    )
+                    st.download_button(
+                        label="📥 Download Results Sheet",
+                        data=report_bytes,
+                        file_name="tension_design_results.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
             else:
 
                 section = truss_analysis.comp_designer(force * 1000, length)
@@ -298,6 +367,20 @@ elif task == "Single Truss Member Design":
 
                     st.success("Design Result")
                     st.dataframe(df)
+
+                    report_bytes = report_generator.compression_design_report(
+                        force_N=force * 1000,
+                        L=length,
+                        grade=truss_analysis.grade,
+                        shapecomp=truss_analysis.shapecomp,
+                        section=section,
+                    )
+                    st.download_button(
+                        label="📥 Download Results Sheet",
+                        data=report_bytes,
+                        file_name="compression_design_results.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
         except Exception as e:
 
@@ -340,6 +423,27 @@ elif task == "Simple Beam Design":
 
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
+
+            if beam_type == "Restrained":
+                report_bytes = report_generator.restrained_beam_report(
+                    M=M, V=V,
+                    grade=truss_analysis.grade,
+                    result=result,
+                )
+            else:
+                report_bytes = report_generator.unrestrained_beam_report(
+                    M=M, V=V, L=L,
+                    grade=truss_analysis.grade,
+                    condition=truss_analysis.condition,
+                    endcondition=truss_analysis.endcondition,
+                    result=result,
+                )
+            st.download_button(
+                label="📥 Download Results Sheet",
+                data=report_bytes,
+                file_name="beam_design_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
         except Exception as e:
             st.error(f"Error: {e}")
@@ -523,6 +627,27 @@ elif task == "Beam Analysis & Design":
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
 
+            if latrestrain:
+                report_bytes = report_generator.restrained_beam_report(
+                    M=M, V=V,
+                    grade=truss_analysis.grade,
+                    result=result,
+                )
+            else:
+                report_bytes = report_generator.unrestrained_beam_report(
+                    M=M, V=V, L=L * 1000,
+                    grade=truss_analysis.grade,
+                    condition=condition,
+                    endcondition=restraint,
+                    result=result,
+                )
+            st.download_button(
+                label="📥 Download Results Sheet",
+                data=report_bytes,
+                file_name="beam_analysis_design_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -695,6 +820,25 @@ elif task == "Beam-Column Design":
                 st.success(f"✅ Utilisation = {U:.3f} (SAFE)")
             else:
                 st.error(f"❌ Utilisation = {U:.3f} (FAIL)")
+
+            report_bytes = report_generator.beam_column_report(
+                L=L,
+                Ned=Ned,
+                Mzed=Mzed,
+                Myed=Myed,
+                shape=shape,
+                C1=C1,
+                grade=truss_analysis.grade,
+                endcondition=truss_analysis.endcondition,
+                all_axis_similar=all_axis_similar,
+                result=result,
+            )
+            st.download_button(
+                label="📥 Download Results Sheet",
+                data=report_bytes,
+                file_name="beam_column_design_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
