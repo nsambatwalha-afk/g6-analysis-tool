@@ -60,6 +60,7 @@ st.title("🏗 Structural Engineering Toolkit")
 task = st.sidebar.radio(
     "Select Task",
     (
+        "🏠 Welcome",
         "Matrix Multiplication",
         "Gauss-Jordan Elimination",
         "Truss Analysis & Design",
@@ -72,10 +73,359 @@ task = st.sidebar.radio(
 )
 
 # =====================================================
+# WELCOME PAGE
+# =====================================================
+
+if task == "🏠 Welcome":
+
+    # ── Hero banner ───────────────────────────────────────────────────────────
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #1a3a5c 0%, #2e6da4 100%);
+            border-radius: 12px;
+            padding: 2.5rem 2rem 2rem 2rem;
+            margin-bottom: 1.5rem;
+            color: white;
+            text-align: center;
+        ">
+            <h1 style="margin:0; font-size:2.6rem; letter-spacing:1px;">
+                🏗 Structural Engineering Toolkit
+            </h1>
+            <p style="margin:0.5rem 0 0 0; font-size:1.15rem; opacity:0.88;">
+                A web-based steel structural analysis &amp; design tool
+            </p>
+            <hr style="border-color:rgba(255,255,255,0.3); margin:1rem 0;">
+            <p style="margin:0; font-size:0.95rem; opacity:0.75;">
+                Civil Engineering Year 3 Continuous Assessment — Design of Steel Structures (2026)<br>
+                <strong>Group 6</strong> &nbsp;|&nbsp; Makerere University Faculty of Engineering
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── About / Overview ─────────────────────────────────────────────────────
+    st.markdown("## 📖 About This Tool")
+    st.markdown(
+        """
+        The **Structural Engineering Toolkit** is an interactive, browser-based application built
+        with [Streamlit](https://streamlit.io/) that brings together several steel-structure
+        analysis and design routines in one place.  It was developed as a **Year 3 Continuous
+        Assessment** for the *Design of Steel Structures* course, and is presented as Group 6's
+        contribution to the wider civil engineering community.
+
+        The tool covers everything from fundamental linear-algebra helpers (matrix multiplication,
+        Gauss-Jordan elimination) up to full 2-D rigid **frame analysis** via the direct stiffness
+        method, with Eurocode-3-aligned **steel section design** for tension members, compression
+        struts, beams, and beam-columns.  Results can be downloaded as formatted Excel workbooks
+        for use in design submissions or further calculation.
+        """
+    )
+
+    st.divider()
+
+    # ── Objectives ────────────────────────────────────────────────────────────
+    col_obj, col_feat = st.columns(2, gap="large")
+
+    with col_obj:
+        st.markdown("### 🎯 Objectives")
+        st.markdown(
+            """
+            - Provide a **unified, interactive** environment for common structural analysis tasks.
+            - Implement and expose the **direct stiffness method** for 2-D truss and rigid-frame
+              problems in an approachable UI.
+            - Automate **Eurocode 3** steel section selection for tension, compression, beam, and
+              beam-column design scenarios.
+            - Generate **downloadable Excel design sheets** that can be used as evidence of
+              compliance with design codes.
+            - Serve as an educational resource for civil engineering students and practitioners.
+            """
+        )
+
+    with col_feat:
+        st.markdown("### ✨ Features")
+        st.markdown(
+            """
+            | Module | What it does |
+            |---|---|
+            | **Matrix Multiplication** | Multiplies two arbitrarily-sized matrices; shows result and offers Excel export. |
+            | **Gauss-Jordan Elimination** | Solves a system of linear equations via full row reduction with step-by-step output. |
+            | **Truss Analysis & Design** | Reads joint/member Excel templates, assembles and solves the stiffness system, then selects tension and compression steel sections for every member. |
+            | **Single Truss Member Design** | Designs one tension or compression member given a force and length. |
+            | **Simple Beam Design** | Selects a UB section for a restrained or unrestrained beam given M, V, and span. |
+            | **Beam Analysis & Design** | Analyses a multi-support beam (point loads + UDLs) via `indeterminatebeam`, extracts peak M & V, then designs the section. |
+            | **Beam-Column Design** | Checks and designs a member subject to combined axial force and bending. |
+            | **Frame Analysis & Design** | Assembles and solves a 2-D rigid frame by the direct stiffness method; shows member forces, node displacements, and designs all members to Eurocode 3. |
+            """
+        )
+
+    st.divider()
+
+    # ── How to Use ────────────────────────────────────────────────────────────
+    st.markdown("## 🛠 How to Use")
+
+    with st.expander("**1 — Matrix Multiplication & Gauss-Jordan**", expanded=False):
+        st.markdown(
+            """
+            1. Select the task from the sidebar.
+            2. Type your matrix (or augmented matrix) into the text box using the format shown
+               — rows separated by `;`, columns by `,` (e.g. `1,2;3,4`).
+            3. Click **Multiply** / **Solve**.
+            4. Download the result with the **📥 Download Results Sheet** button.
+            """
+        )
+
+    with st.expander("**2 — Truss Analysis & Design**", expanded=False):
+        st.markdown(
+            """
+            1. Download the **joints** and **members** Excel templates provided on the task page.
+            2. Fill in joint coordinates, support conditions, and applied loads in `joints.xlsx`.
+            3. Fill in connectivity, member properties (cross-section, elastic modulus) in `members.xlsx`.
+            4. Upload both files, configure the **Steel Properties** panel (grade, section shape,
+               jointing type), and click **Run Analysis & Design**.
+            5. Review the Tension / Compression design summary tables and cross-section diagrams,
+               then download the full results workbook.
+            """
+        )
+
+    with st.expander("**3 — Single Truss Member Design**", expanded=False):
+        st.markdown(
+            """
+            1. Choose this task from the sidebar.
+            2. Set steel grade and section preferences in the Steel Properties panel.
+            3. Enter the axial force (kN), select Tension or Compression, and (for compression)
+               the member length (mm).
+            4. Click **Design Member** to see the chosen section, utilisation, and section diagram.
+            """
+        )
+
+    with st.expander("**4 — Simple Beam Design**", expanded=False):
+        st.markdown(
+            """
+            1. Choose steel grade.
+            2. Enter the design bending moment (kNm), shear force (kN), and beam span (mm).
+            3. Select **Restrained** or **Unrestrained**; for unrestrained beams also choose the
+               beam condition and restraint level.
+            4. Click **Design Beam** — the app picks the lightest satisfactory UB section and
+               shows its cross-section diagram.
+            """
+        )
+
+    with st.expander("**5 — Beam Analysis & Design**", expanded=False):
+        st.markdown(
+            """
+            1. Set the steel grade, beam condition, and whether lateral restraint is provided.
+            2. Enter the beam length and define supports (position and type: Pinned / Roller / Fixed).
+            3. Add loads (Point Loads and/or UDLs).
+            4. Click **Analyze & Design Beam** — the tool solves the beam, reports max M and V,
+               selects a UB section, and produces an Excel report.
+            """
+        )
+
+    with st.expander("**6 — Beam-Column Design**", expanded=False):
+        st.markdown(
+            """
+            1. Enter the axial compression force (kN) and the design bending moment (kNm).
+            2. Specify the member length and effective-length conditions.
+            3. Click **Design Beam-Column** to obtain the recommended UC section and interaction
+               check results.
+            """
+        )
+
+    with st.expander("**7 — Frame Analysis & Design**", expanded=False):
+        st.markdown(
+            """
+            1. Use the interactive tables on the task page to enter:
+               - **Nodes** — ID, X-coordinate (m), Y-coordinate (m).
+               - **Members** — ID, start node, end node, type (Beam / Column).
+               - **Supports** — node ID and support type (Fixed / Pinned / Roller H / Roller V).
+               - **Node Loads** — Fx (kN), Fy (kN), Mz (kNm) at any node.
+               - **UDL Loads** — wx and wy (kN/m) along any member.
+            2. Choose the steel grade.
+            3. Click **Run Frame Analysis & Design** — the app solves the structure, displays member
+               forces and node displacements, then designs each member.
+            """
+        )
+
+    st.divider()
+
+    # ── Libraries Used ────────────────────────────────────────────────────────
+    st.markdown("## 📦 Libraries & Technologies Used")
+
+    lib_col1, lib_col2, lib_col3 = st.columns(3, gap="medium")
+
+    with lib_col1:
+        st.markdown(
+            """
+            **🌐 Streamlit**
+            *v≥1.0*
+
+            Powers the entire web front-end — widgets, layouts, file uploaders, download buttons,
+            and real-time interactivity without any JavaScript.
+
+            ---
+
+            **🔢 NumPy**
+            *Scientific computing*
+
+            Matrix assembly, inversion, eigenvalue decomposition, and all numerical linear-algebra
+            operations underpinning the stiffness method.
+            """
+        )
+
+    with lib_col2:
+        st.markdown(
+            """
+            **📊 Pandas**
+            *Data analysis*
+
+            Structures and displays design-summary tables; used internally when reading Excel
+            section databases and writing output workbooks.
+
+            ---
+
+            **📁 openpyxl**
+            *Excel I/O*
+
+            Reads the joints/members input templates and writes formatted Excel design reports
+            for download.
+            """
+        )
+
+    with lib_col3:
+        st.markdown(
+            """
+            **📐 Matplotlib**
+            *Visualisation*
+
+            Renders annotated cross-section diagrams (I-sections, CHS, angle sections) that
+            appear alongside every design result.
+
+            ---
+
+            **🏗 indeterminatebeam**
+            *Beam analysis*
+
+            Solves statically indeterminate beams — extracts support reactions, bending-moment
+            diagrams, and shear envelopes for the *Beam Analysis & Design* module.
+            """
+        )
+
+    st.divider()
+
+    # ── Limitations ───────────────────────────────────────────────────────────
+    st.markdown("## ⚠️ Limitations")
+    st.warning(
+        """
+        Please read these limitations before using the tool for any structural design work:
+
+        - **2-D only:** All structural analysis (truss and frame) is confined to a single vertical
+          plane. Out-of-plane effects, torsion, and biaxial bending are not considered.
+        - **Linear elastic analysis:** The solver assumes small displacements and linear material
+          behaviour. Second-order (P-Δ / P-δ) effects are ignored.
+        - **Fixed section properties for frame analysis:** The frame-analysis engine uses
+          representative mid-range I-section properties (UB 457×191×67 for beams,
+          UC 254×254×73 for columns) during the stiffness assembly; actual selected sections may
+          differ, so a design-iteration loop is not implemented.
+        - **Eurocode 3 scope:** Design checks follow EC3 principles for common cases. Some
+          specialist checks (e.g. web crippling, patch loading, Class 4 sections) are outside the
+          current scope.
+        - **No dynamic or seismic analysis:** The tool is limited to static loading.
+        - **Section databases:** The available section libraries are UB, UC, CHS, and equal/unequal
+          angles loaded from the bundled Excel files. If a required section is not in the database,
+          no result will be returned.
+        - **Units:** Inputs and outputs must follow the conventions stated in each module
+          (kN, kNm, m, mm as labelled). Mixing units will produce incorrect results.
+        - **Gauss-Jordan solver:** The custom solver in `libfunc.py` requires non-zero diagonal
+          pivots and does not implement partial pivoting; it will fail for some well-posed systems
+          that need row swapping.
+        """
+    )
+
+    st.divider()
+
+    # ── Team ──────────────────────────────────────────────────────────────────
+    st.markdown("## 👥 The Team — Group 6")
+    st.markdown(
+        """
+        This tool was developed as a **Year 3 Continuous Assessment** for the
+        *Design of Steel Structures* course (2026) by the following students:
+        """
+    )
+
+    team = [
+        {
+            "name": "Nsamba Twalha Imran",
+            "role": "System Designer & Lead Developer",
+            "note": "Designed and built the full application architecture, analysis engines, and Streamlit interface.",
+        },
+        {
+            "name": "Samuel Kalibala",
+            "role": "Group Member",
+            "note": "Contributed to the continuous assessment and verification of design outputs.",
+        },
+        {
+            "name": "Natude Daniel",
+            "role": "Group Member",
+            "note": "Contributed to the continuous assessment and verification of design outputs.",
+        },
+        {
+            "name": "Mwesigwa Eria",
+            "role": "Group Member",
+            "note": "Contributed to the continuous assessment and verification of design outputs.",
+        },
+    ]
+
+    team_cols = st.columns(4, gap="medium")
+    icons = ["👨‍💻", "👷", "👷", "👷"]
+
+    for col, member, icon in zip(team_cols, team, icons):
+        with col:
+            st.markdown(
+                f"""
+                <div style="
+                    border: 1px solid #dde3ea;
+                    border-radius: 10px;
+                    padding: 1.1rem 0.9rem;
+                    text-align: center;
+                    background: #f7faff;
+                    height: 100%;
+                ">
+                    <div style="font-size:2.2rem;">{icon}</div>
+                    <h4 style="margin:0.4rem 0 0.2rem 0; font-size:0.95rem; color:#1a3a5c;">
+                        {member['name']}
+                    </h4>
+                    <p style="margin:0; font-size:0.78rem; color:#2e6da4; font-weight:600;">
+                        {member['role']}
+                    </p>
+                    <p style="margin:0.5rem 0 0 0; font-size:0.75rem; color:#555;">
+                        {member['note']}
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    st.markdown(
+        """
+        <div style="text-align:center; color:#888; font-size:0.85rem; padding: 0.5rem 0 1rem 0;">
+            🏛️ &nbsp; Presented as Group 6's contribution to the Civil Engineering community &nbsp; | &nbsp;
+            Design of Steel Structures · 2026 &nbsp; | &nbsp;
+            Built with ❤️ using Python &amp; Streamlit
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# =====================================================
 # MATRIX MULTIPLICATION
 # =====================================================
 
-if task == "Matrix Multiplication":
+elif task == "Matrix Multiplication":
 
     st.header("Matrix Multiplication")
 
