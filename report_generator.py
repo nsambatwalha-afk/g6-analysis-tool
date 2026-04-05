@@ -1222,3 +1222,192 @@ def _eff_L(L, endcondition):
     }
     factor = mapping.get(endcondition, 1.0)
     return L * factor
+
+
+# ─────────────────────────────────────────────
+# 9. Frame Analysis & Design
+# ─────────────────────────────────────────────
+
+def frame_design_report(
+    grade: str,
+    beam_condition: str,
+    col_condition: str,
+    col_endcondition: str,
+    member_analysis: dict,   # {mid: {"N_start",...,"type","length",...}}
+    member_design: dict,     # {mid: design-result dict}
+    nodes,
+    members,
+    supports,
+    node_loads,
+    udl_loads,
+) -> io.BytesIO:
+    """
+    Generate a formatted Excel results sheet for the Frame Analysis & Design task.
+
+    member_design values are either the dict returned by restrained_beam (for beams)
+    or the dict returned by beam_column (for columns).
+    """
+    wb, ws, row = _new_wb("Frame Analysis & Design — Results Sheet (EC3)")
+
+    fy, fu = get_grade_props(grade)
+
+    # ── DESIGN INPUTS ─────────────────────────────────────────────────────
+    row = _section(ws, row, "DESIGN INPUTS")
+    row = _step(ws, row, "·", "Steel Grade",             grade)
+    row = _step(ws, row, "·", "f_y",                     f"{_fmt(fy)} MPa")
+    row = _step(ws, row, "·", "f_u",                     f"{_fmt(fu)} MPa")
+    row = _step(ws, row, "·", "E",                       "210 000 MPa")
+    row = _step(ws, row, "·", "Beam Section Type",       "UB  (Universal Beam)")
+    row = _step(ws, row, "·", "Beam Lateral Condition",  beam_condition)
+    row = _step(ws, row, "·", "Column Section Type",     "UC  (Universal Column)")
+    row = _step(ws, row, "·", "Column Steel Condition",  col_condition)
+    row = _step(ws, row, "·", "Column End Condition",    col_endcondition)
+    row = _blank(ws, row)
+
+    # ── FRAME GEOMETRY ─────────────────────────────────────────────────────
+    row = _section(ws, row, "FRAME GEOMETRY — Nodes")
+    row = _step(ws, row, "Node", "X (m)", "Y (m)", "")
+    for n in nodes:
+        row = _step(ws, row, str(int(n[0])), _fmt(float(n[1]), 3), _fmt(float(n[2]), 3), "")
+    row = _blank(ws, row)
+
+    row = _section(ws, row, "FRAME GEOMETRY — Members")
+    row = _step(ws, row, "Member", "Start Node → End Node", "Type", "Length (m)")
+    for m in members:
+        mid_label = str(int(m[0]))
+        conn      = f"Node {int(m[1])}  →  Node {int(m[2])}"
+        mtype     = str(m[3])
+        L_m       = member_analysis.get(int(m[0]), {}).get("length", 0.0)
+        row = _step(ws, row, mid_label, conn, mtype, _fmt(L_m, 3))
+    row = _blank(ws, row)
+
+    row = _section(ws, row, "FRAME GEOMETRY — Support Conditions")
+    row = _step(ws, row, "Node", "Condition", "", "")
+    for s in supports:
+        row = _step(ws, row, str(int(s[0])), str(s[1]), "", "")
+    row = _blank(ws, row)
+
+    # ── APPLIED LOADS ─────────────────────────────────────────────────────
+    if node_loads:
+        row = _section(ws, row, "APPLIED LOADS — Nodal Loads")
+        row = _step(ws, row, "Node", "Fx (kN)", "Fy (kN)", "Mz (kNm)")
+        for nl in node_loads:
+            if any(abs(float(v)) > 1e-12 for v in nl[1:]):
+                row = _step(ws, row, str(int(nl[0])),
+                            _fmt(float(nl[1]), 3),
+                            _fmt(float(nl[2]), 3),
+                            _fmt(float(nl[3]), 3))
+        row = _blank(ws, row)
+
+    if udl_loads:
+        row = _section(ws, row, "APPLIED LOADS — Member UDL")
+        row = _step(ws, row, "Member", "wx (kN/m)", "wy (kN/m)", "")
+        for ul in udl_loads:
+            if any(abs(float(v)) > 1e-12 for v in ul[1:]):
+                row = _step(ws, row, str(int(ul[0])),
+                            _fmt(float(ul[1]), 3),
+                            _fmt(float(ul[2]), 3), "")
+        row = _blank(ws, row)
+
+    # ── ANALYSIS METHOD ────────────────────────────────────────────────────
+    row = _section(ws, row, "STRUCTURAL ANALYSIS — Method")
+    row = _step(ws, row, "Method",
+                "2-D Rigid Frame Direct Stiffness Method",
+                "3 DOF per node (u, v, θ)", "")
+    row = _step(ws, row, "Beam EI",
+                "Assumed representative section for elastic analysis",
+                "UB 457×191×67  (I_y = 29 400 cm⁴)", "")
+    row = _step(ws, row, "Column EI",
+                "Assumed representative section for elastic analysis",
+                "UC 254×254×73  (I_y = 11 360 cm⁴)", "")
+    row = _blank(ws, row)
+
+    # ── ANALYSIS RESULTS ───────────────────────────────────────────────────
+    row = _section(ws, row, "ANALYSIS RESULTS — Member End Forces")
+    row = _step(ws, row, "Member", "Type",
+                "N_start/N_end (kN)",
+                "V_start/V_end (kN)  |  M_start/M_end (kNm)")
+    for mid, res in member_analysis.items():
+        axial_type = "T (tension)" if res["N_start"] >= 0 else "C (compression)"
+        n_str    = f"{_fmt(res['N_start'], 2)} ({axial_type}) / {_fmt(res['N_end'], 2)} kN"
+        v_str    = f"{_fmt(res['V_start'], 2)} / {_fmt(res['V_end'], 2)} kN"
+        m_str    = f"{_fmt(res['M_start'], 2)} / {_fmt(res['M_end'], 2)} kNm"
+        row = _step(ws, row, f"Member {mid}", res["type"], n_str, f"{v_str}  |  {m_str}")
+    row = _blank(ws, row)
+
+    # ── DESIGN EQUATIONS ───────────────────────────────────────────────────
+    row = _section(ws, row, "DESIGN EQUATIONS")
+    row = _step(ws, row, "Beams",
+                "Shear:  V_pl,Rd = A_v × f_y / (√3 × γ_M0)   [γ_M0 = 1.0]",
+                "", "")
+    row = _step(ws, row, "",
+                "Moment (restrained): M_pl,Rd = W_pl × f_y / γ_M0",
+                "", "")
+    row = _step(ws, row, "",
+                "Moment (unrestrained): M_b,Rd = χ_LT × W_pl × f_y / γ_M0",
+                "", "")
+    row = _step(ws, row, "Columns",
+                "Axial buckling:  N_b,Rd = χ × A × f_y / γ_M1   [γ_M1 = 1.0]",
+                "", "")
+    row = _step(ws, row, "",
+                "Interaction (EC3 Eq. 6.61): N/N_b,Rd + k_yy × M_y/M_b,Rd + k_yz × M_z/M_z,Rd ≤ 1.0",
+                "", "")
+    row = _blank(ws, row)
+
+    # ── DESIGN RESULTS — BEAMS ────────────────────────────────────────────
+    beam_mids = [mid for mid, res in member_analysis.items()
+                 if res["type"] == "Beam" and mid in member_design]
+    if beam_mids:
+        row = _section(ws, row, "DESIGN RESULTS — Beams (UB sections)")
+        row = _step(ws, row, "Member", "Section", "M_Rd (kNm)  /  M_Ed (kNm)",
+                    "V_Rd (kN)  /  V_Ed (kN)  |  Utilisation  |  Status")
+        for mid in beam_mids:
+            dr   = member_design[mid]
+            ar   = member_analysis[mid]
+            M_Ed = max(abs(ar["M_start"]), abs(ar["M_end"]))
+            V_Ed = max(abs(ar["V_start"]), abs(ar["V_end"]))
+            Mrd  = dr.get("M_Rd (kNm)", 0.0)
+            Vrd  = dr.get("V_Rd (kN)", 0.0)
+            util = dr.get("Utilization (%)", 0.0)
+            ok   = util <= 100.0
+            size = dr.get("Size", "—")
+            m_str = f"M_Rd={_fmt(Mrd,2)} / M_Ed={_fmt(M_Ed,2)} kNm"
+            v_str = f"V_Rd={_fmt(Vrd,2)} / V_Ed={_fmt(V_Ed,2)} kN | U={_fmt(util,1)}%"
+            row = _step(ws, row, f"Member {mid}", size, m_str, v_str)
+            passed_str = "PASS ✓" if ok else "FAIL ✗"
+            row = _result_row(ws, row,
+                              f"Member {mid} — {size}  |  Utilisation {_fmt(util,1)}%",
+                              passed_str, ok)
+        row = _blank(ws, row)
+
+    # ── DESIGN RESULTS — COLUMNS ──────────────────────────────────────────
+    col_mids = [mid for mid, res in member_analysis.items()
+                if res["type"] == "Column" and mid in member_design]
+    if col_mids:
+        row = _section(ws, row, "DESIGN RESULTS — Columns (UC sections)")
+        row = _step(ws, row, "Member", "Section",
+                    "N_b,Rd (kN)  |  N_Ed (kN)  |  Class",
+                    "Utilisation  |  χ_y  |  χ_z  |  χ_LT  |  Status")
+        for mid in col_mids:
+            dr    = member_design[mid]
+            ar    = member_analysis[mid]
+            N_Ed  = max(abs(ar["N_start"]), abs(ar["N_end"]))
+            U     = dr.get("utilisation", 0.0)
+            ok    = U <= 1.0
+            size  = dr.get("Designation", "—")
+            Nbrd  = dr.get("N_b_Rd", 0.0)
+            cls   = dr.get("class", "—")
+            chiy  = dr.get("chi_y",  0.0)
+            chiz  = dr.get("chi_z",  0.0)
+            chiLT = dr.get("chi_LT", 0.0)
+            n_str = f"N_b,Rd={_fmt(Nbrd/1000,2)} kN | N_Ed={_fmt(N_Ed,2)} kN | Class {cls}"
+            u_str = (f"U={_fmt(U,3)} | χ_y={_fmt(chiy,3)} | "
+                     f"χ_z={_fmt(chiz,3)} | χ_LT={_fmt(chiLT,3)}")
+            row = _step(ws, row, f"Member {mid}", size, n_str, u_str)
+            passed_str = "PASS ✓" if ok else "FAIL ✗"
+            row = _result_row(ws, row,
+                              f"Member {mid} — {size}  |  Utilisation {_fmt(U,3)}",
+                              passed_str, ok)
+        row = _blank(ws, row)
+
+    return _wb_bytes(wb)
