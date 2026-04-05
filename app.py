@@ -1396,7 +1396,10 @@ elif task == "Frame Analysis & Design":
     st.caption(
         "Connect nodes to form the frame. "
         "Choose **Beam** (horizontal / inclined, designed as UB) or "
-        "**Column** (vertical, designed as UC with axial + bending)."
+        "**Column** (vertical, designed as UC with axial + bending). "
+        "**Beam** members that carry significant axial force alongside bending "
+        "are automatically reclassified as **Beam-Columns** and designed to "
+        "EC3 §6.3.3 (N+M interaction check) using UB sections."
     )
     members_df = st.data_editor(
         _default_members,
@@ -1505,6 +1508,13 @@ elif task == "Frame Analysis & Design":
 
             member_design = {}
             design_errors = {}
+            member_effective_types = {}
+
+            # Thresholds for beam-column detection: a Beam member with axial
+            # force and bending moment above these limits is redesigned as a
+            # beam-column so that the N+M interaction is properly checked.
+            _BC_N_THRESHOLD = 1.0   # kN
+            _BC_M_THRESHOLD = 1.0   # kNm
 
             for mid, res in member_results.items():
                 L_m   = res["length"]
@@ -1513,8 +1523,35 @@ elif task == "Frame Analysis & Design":
                 V_kN  = max(abs(res["V_start"]), abs(res["V_end"]))
                 M_kNm = max(abs(res["M_start"]), abs(res["M_end"]))
 
+                # A Beam member that carries significant axial force alongside
+                # bending must be treated as a beam-column.
+                is_beam_column = (
+                    res["type"] == "Beam"
+                    and N_kN > _BC_N_THRESHOLD
+                    and M_kNm > _BC_M_THRESHOLD
+                )
+
                 try:
-                    if res["type"] == "Beam":
+                    if is_beam_column:
+                        # Design as beam-column using UB shape (EC3 §6.3.3)
+                        member_effective_types[mid] = "Beam-Column"
+                        truss_analysis.endcondition = col_endcondition
+                        N_N   = N_kN  * 1000
+                        M_Nmm = M_kNm * 1e6
+                        M1 = abs(res["M_start"])
+                        M2 = abs(res["M_end"])
+                        Mmax = max(M1, M2, 1e-6)
+                        Mmin = max(min(M1, M2), 1e-6)
+                        posseidon = np.clip(Mmax / Mmin, 1.0, 10.0)
+                        C1 = 1.0 / (0.3 + 0.7 * posseidon ** 2)
+                        dr = truss_analysis.beam_column(
+                            L=L_mm, Ned=N_N, Mzed=M_Nmm, Myed=0.0,
+                            shape="UB", C1=C1, all_axis_similar=True,
+                        )
+                        member_design[mid] = dr
+
+                    elif res["type"] == "Beam":
+                        member_effective_types[mid] = "Beam"
                         if beam_condition == "Restrained":
                             dr = truss_analysis.restrained_beam(M_kNm, V_kN)
                         else:
@@ -1523,6 +1560,7 @@ elif task == "Frame Analysis & Design":
                         member_design[mid] = dr
 
                     else:  # Column
+                        member_effective_types[mid] = "Column"
                         truss_analysis.endcondition = col_endcondition
                         N_N   = N_kN  * 1000
                         M_Nmm = M_kNm * 1e6
@@ -1540,12 +1578,14 @@ elif task == "Frame Analysis & Design":
 
                 except Exception as exc:
                     design_errors[mid] = str(exc)
+                    member_effective_types.setdefault(mid, res["type"])
 
             # ── Store everything in session state so it survives re-runs
             st.session_state["frame_results"] = {
                 "member_results": member_results,
                 "member_design":  member_design,
                 "design_errors":  design_errors,
+                "member_effective_types": member_effective_types,
                 "nodes_list":     nodes_list,
                 "members_list":   members_list,
                 "supports_list":  supports_list,
@@ -1568,6 +1608,7 @@ elif task == "Frame Analysis & Design":
         member_results = fr["member_results"]
         member_design  = fr["member_design"]
         design_errors  = fr["design_errors"]
+        member_effective_types = fr.get("member_effective_types", {})
         nodes_list     = fr["nodes_list"]
         members_list   = fr["members_list"]
         supports_list  = fr["supports_list"]
@@ -1610,6 +1651,7 @@ elif task == "Frame Analysis & Design":
 
         for mid, res in member_results.items():
             mtype = res["type"]
+            eff_type = member_effective_types.get(mid, mtype)
 
             with st.container():
                 header_col, btn_col = st.columns([5, 1])
@@ -1624,7 +1666,7 @@ elif task == "Frame Analysis & Design":
 
                 dr = member_design[mid]
 
-                if mtype == "Beam":
+                if eff_type == "Beam":
                     size  = dr.get("Size", "—")
                     util  = dr.get("Utilization (%)", 0.0)
                     ok    = util <= 100.0
@@ -1640,7 +1682,30 @@ elif task == "Frame Analysis & Design":
                         "Status": "PASS ✓" if ok else "FAIL ✗",
                     }
                     util_str = f"{util:.1f}%"
-                else:
+
+                elif eff_type == "Beam-Column":
+                    size  = dr.get("Designation", "—")
+                    U     = dr.get("utilisation", 0.0)
+                    ok    = U <= 1.0
+                    Nbrd  = dr.get("N_b_Rd", 0.0) / 1000
+                    N_Ed  = max(abs(res["N_start"]), abs(res["N_end"]))
+                    M_Ed  = max(abs(res["M_start"]), abs(res["M_end"]))
+                    row_d = {
+                        "Member": mid,
+                        "Type": "Beam-Column (UB) ⚠️ reclassified",
+                        "Section": size,
+                        "N_Ed (kN)": round(N_Ed, 2), "N_b,Rd (kN)": round(Nbrd, 2),
+                        "M_Ed (kNm)": round(M_Ed, 2),
+                        "Class": dr.get("class", "—"),
+                        "χ_y":  round(dr.get("chi_y",  0), 3),
+                        "χ_z":  round(dr.get("chi_z",  0), 3),
+                        "χ_LT": round(dr.get("chi_LT", 0), 3),
+                        "Utilisation": round(U, 3),
+                        "Status": "PASS ✓" if ok else "FAIL ✗",
+                    }
+                    util_str = f"{U:.3f}"
+
+                else:  # Column
                     size  = dr.get("Designation", "—")
                     U     = dr.get("utilisation", 0.0)
                     ok    = U <= 1.0
@@ -1661,15 +1726,22 @@ elif task == "Frame Analysis & Design":
                     util_str = f"{U:.3f}"
 
                 with header_col:
+                    label = eff_type if eff_type != "Beam-Column" else f"{mtype} → Beam-Column"
                     if ok:
                         st.success(
-                            f"**Member {mid}** ({mtype}) — **{size}** — "
+                            f"**Member {mid}** ({label}) — **{size}** — "
                             f"Utilisation: {util_str}"
                         )
                     else:
                         st.error(
-                            f"**Member {mid}** ({mtype}) — **{size}** — "
+                            f"**Member {mid}** ({label}) — **{size}** — "
                             f"FAIL — Utilisation: {util_str}"
+                        )
+                    if eff_type == "Beam-Column":
+                        st.info(
+                            "ℹ️ This member carries both significant axial force and "
+                            "bending moment and has been automatically reclassified as a "
+                            "**Beam-Column** and designed to EC3 §6.3.3 (N+M interaction)."
                         )
                     st.dataframe(pd.DataFrame([row_d]), use_container_width=True)
 
@@ -1687,11 +1759,15 @@ elif task == "Frame Analysis & Design":
                         f"V_Ed = {round(max(abs(res['V_start']), abs(res['V_end'])), 2):.2f} kN  |  "
                         f"N_Ed = {round(max(abs(res['N_start']), abs(res['N_end'])), 2):.2f} kN"
                     )
-                    if mtype == "Beam":
+                    if eff_type == "Beam":
                         fig = section_visualizer.visualize_beam_section(
                             size, grade=_grade,
                             beam_type=f"{_beam_cond} Beam",
                             info_text=info,
+                        )
+                    elif eff_type == "Beam-Column":
+                        fig = section_visualizer.visualize_beam_column_section(
+                            size, shape="UB", grade=_grade, info_text=info,
                         )
                     else:
                         fig = section_visualizer.visualize_beam_column_section(
@@ -1709,6 +1785,7 @@ elif task == "Frame Analysis & Design":
                 col_endcondition=_col_ec,
                 member_analysis=member_results,
                 member_design=member_design,
+                member_effective_types=member_effective_types,
                 nodes=nodes_list,
                 members=members_list,
                 supports=supports_list,
