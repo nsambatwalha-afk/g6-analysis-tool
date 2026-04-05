@@ -207,7 +207,7 @@ def gauss_jordan_report(aug_input: np.matrix) -> io.BytesIO:
             factor = arg[i, j] / arg[j, j]
             eq = (f"R{i+1} ← R{i+1} - ({_fmt(arg[i,j])} / {_fmt(arg[j,j])}) × R{j+1}  "
                   f"[factor = {_fmt(factor)}]")
-            arg[i] = (-(factor)) * arg[j] + arg[i]
+            arg[i] = -factor * arg[j] + arg[i]
             row = _step(ws, row, f"Step {step_no}", eq, "")
             # Show updated matrix
             for r in range(arg.shape[0]):
@@ -230,7 +230,7 @@ def gauss_jordan_report(aug_input: np.matrix) -> io.BytesIO:
             factor = arg[i, j] / arg[j, j]
             eq = (f"R{i+1} ← R{i+1} - ({_fmt(arg[i,j])} / {_fmt(arg[j,j])}) × R{j+1}  "
                   f"[factor = {_fmt(factor)}]")
-            arg[i] = (-(factor)) * arg[j] + arg[i]
+            arg[i] = -factor * arg[j] + arg[i]
             row = _step(ws, row, f"Step {step_no}", eq, "")
             for r in range(arg.shape[0]):
                 vals = "  ".join(_fmt(arg[r, c]) for c in range(arg.shape[1]))
@@ -265,7 +265,13 @@ def gauss_jordan_report(aug_input: np.matrix) -> io.BytesIO:
 
 def get_grade_props(grade: str):
     """Returns (fy, fu) for the given grade string."""
-    wb = openpyxl.load_workbook("grades.xlsx").active
+    try:
+        wb = openpyxl.load_workbook("grades.xlsx").active
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            "grades.xlsx not found. Ensure the grade properties file is present "
+            "in the working directory."
+        )
     for i in range(2, 10):
         if wb.cell(row=i, column=1).value == grade:
             return float(wb.cell(row=i, column=2).value), float(wb.cell(row=i, column=3).value)
@@ -563,7 +569,13 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.B
     gamma_M0 = 1.0
 
     # Re-read section props for the chosen size
-    ex = openpyxl.load_workbook("UB-2.xlsx").active
+    try:
+        ex = openpyxl.load_workbook("UB-2.xlsx").active
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            "UB-2.xlsx not found. Ensure the UB section properties file is present "
+            "in the working directory."
+        )
     size = result["Size"]
     Wpl = Av = Aw = tw = h = tf = None
     for i in range(2, ex.max_row + 1):
@@ -709,7 +721,13 @@ def unrestrained_beam_report(
     size = result["Size"]
 
     # Re-read section
-    ex = openpyxl.load_workbook("UB-2.xlsx").active
+    try:
+        ex = openpyxl.load_workbook("UB-2.xlsx").active
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            "UB-2.xlsx not found. Ensure the UB section properties file is present "
+            "in the working directory."
+        )
     sec = {}
     for i in range(2, ex.max_row + 1):
         if ex.cell(row=i, column=1).value == size:
