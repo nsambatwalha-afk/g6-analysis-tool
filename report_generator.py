@@ -174,9 +174,9 @@ def gauss_jordan_report(aug_input: np.matrix) -> io.BytesIO:
     wb, ws, row = _new_wb("Gauss-Jordan Elimination — Results Sheet")
 
     arg = aug_input.copy().astype(float)
-    shaper = arg.shape
-    rows = shaper[0]
-    cols = shaper[1] - 1
+    matrix_shape = arg.shape
+    rows = matrix_shape[0]
+    cols = matrix_shape[1] - 1
 
     def mat_str(m):
         lines = []
@@ -263,10 +263,9 @@ def gauss_jordan_report(aug_input: np.matrix) -> io.BytesIO:
 # Shared helper: look up grade properties
 # ─────────────────────────────────────────────
 
-def _get_grade_props(grade: str):
+def get_grade_props(grade: str):
     """Returns (fy, fu) for the given grade string."""
-    import openpyxl as xl
-    wb = xl.load_workbook("grades.xlsx").active
+    wb = openpyxl.load_workbook("grades.xlsx").active
     for i in range(2, 10):
         if wb.cell(row=i, column=1).value == grade:
             return float(wb.cell(row=i, column=2).value), float(wb.cell(row=i, column=3).value)
@@ -292,7 +291,7 @@ def tension_design_report(
 ) -> io.BytesIO:
     wb, ws, row = _new_wb("Tension Member Design — Results Sheet (EC3)")
 
-    fy, fu = _get_grade_props(grade)
+    fy, fu = get_grade_props(grade)
     agross = section[0]
     size   = section[1]
     t      = section[2]
@@ -428,7 +427,7 @@ def compression_design_report(
 ) -> io.BytesIO:
     wb, ws, row = _new_wb("Compression Member Design — Results Sheet (EC3)")
 
-    fy, _ = _get_grade_props(grade)
+    fy, _ = get_grade_props(grade)
     E = 210000  # MPa
 
     if shapecomp in ("UC", "UB"):
@@ -558,15 +557,13 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.B
     result is the dict returned by truss_analysis.restrained_beam().
     Re-reads section properties from UB-2.xlsx to show step-by-step.
     """
-    import openpyxl as xl
-
     wb, ws, row = _new_wb("Restrained Beam Design — Results Sheet (EC3)")
 
-    fy, _ = _get_grade_props(grade)
+    fy, _ = get_grade_props(grade)
     gamma_M0 = 1.0
 
     # Re-read section props for the chosen size
-    ex = xl.load_workbook("UB-2.xlsx").active
+    ex = openpyxl.load_workbook("UB-2.xlsx").active
     size = result["Size"]
     Wpl = Av = Aw = tw = h = tf = None
     for i in range(2, ex.max_row + 1):
@@ -703,18 +700,16 @@ def unrestrained_beam_report(
     M in kNm, V in kN, L in mm.
     result is the dict returned by truss_analysis.unrestrained_beam().
     """
-    import openpyxl as xl
-
     wb, ws, row = _new_wb("Unrestrained Beam Design — Results Sheet (EC3 LTB)")
 
-    fy, _ = _get_grade_props(grade)
+    fy, _ = get_grade_props(grade)
     E = 210000
     gamma_M1 = 1.0
 
     size = result["Size"]
 
     # Re-read section
-    ex = xl.load_workbook("UB-2.xlsx").active
+    ex = openpyxl.load_workbook("UB-2.xlsx").active
     sec = {}
     for i in range(2, ex.max_row + 1):
         if ex.cell(row=i, column=1).value == size:
@@ -956,7 +951,7 @@ def beam_column_report(
 ) -> io.BytesIO:
     wb, ws, row = _new_wb("Beam-Column Design — Results Sheet (EC3 Cl.6.3.3)")
 
-    fy, _ = _get_grade_props(grade)
+    fy, _ = get_grade_props(grade)
     E = 210000
     G = 81000
 
@@ -1103,11 +1098,9 @@ def truss_report(
     p: float = 0,
     ngs: float = 0
 ) -> io.BytesIO:
-    import openpyxl as xl
-
     wb, ws, row = _new_wb("Truss Analysis & Design — Results Sheet (EC3)")
 
-    fy, fu = _get_grade_props(grade)
+    fy, fu = get_grade_props(grade)
     E = 210000
 
     # ── ANALYSIS SUMMARY ──

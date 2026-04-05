@@ -327,7 +327,6 @@ elif task == "Single Truss Member Design":
                     st.success("Design Result")
                     st.dataframe(df)
 
-                    fy, fu = report_generator._get_grade_props(truss_analysis.grade)
                     report_bytes = report_generator.tension_design_report(
                         force_N=force * 1000,
                         grade=truss_analysis.grade,
