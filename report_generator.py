@@ -1076,15 +1076,11 @@ def beam_column_report(
                 f"= {_fmt(util_z, 4)}")
     row = _blank(ws, row)
 
-    row = _step(ws, row, "Simplified",
-                "N_Ed/N_b,Rd + 1.0 × M_y,Ed/M_b,Rd + 0.6 × M_z,Ed/M_z,Rd ≤ 1.0",
-                "",
-                f"(see governing utilisation below)")
     row = _blank(ws, row)
 
     passed = U <= 1.0
     row = _step(ws, row, "Governing",
-                "U = max(Eq.6.61, Eq.6.62, simplified)",
+                "U = max(Eq.6.61, Eq.6.62)",
                 f"U = {_fmt(U, 4)}",
                 "PASS ✓" if passed else "FAIL ✗")
 

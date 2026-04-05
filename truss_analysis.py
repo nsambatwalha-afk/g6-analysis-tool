@@ -230,7 +230,7 @@ def ten_designer(f):
         elif jointing == "bolt" and not stag:
             anet = agross - nh * t * (d + 2.0)
         elif jointing == "bolt" and stag:
-            anet = agross - nh * t * (d + 2.0) + ngs * (((s ** 2) * t) / 4 * p)
+            anet = agross - nh * t * (d + 2.0) + ngs * (((s ** 2) * t) / (4 * p))
         else:
             print("\n\nJointing not recognized.\n\n")
     if counter==1000:
@@ -251,7 +251,7 @@ def ten_designer(f):
         elif jointing == "bolt" and not stag:
             anet = agross - nh * t * (d + 2.0)
         elif jointing == "bolt" and stag:
-            anet = agross - nh * t * (d + 2.0) + ngs * (((s ** 2) * t) / 4 * p)
+            anet = agross - nh * t * (d + 2.0) + ngs * (((s ** 2) * t) / (4 * p))
         else:
             print("\n\nSomething went wrong. Error code 1\n\n")
             return None
@@ -297,7 +297,7 @@ def comp_designer(f,L):
             Ncr = (np.pi ** 2 * E * I) / (L ** 2)
             lam_bar = np.sqrt((A * fy) / Ncr)
             phi = 0.5 * (1 + alpha * (lam_bar - 0.2) + lam_bar ** 2)
-            chi = 1 / (phi + np.sqrt(phi ** 2 - lam_bar ** 2))
+            chi = min(1 / (phi + np.sqrt(phi ** 2 - lam_bar ** 2)), 1.0)
             NbRd = chi * A * fy
             if NbRd >= f:
                 return {
@@ -329,7 +329,7 @@ def comp_designer(f,L):
             Ncr = (np.pi ** 2 * E * I) / (L ** 2)
             lam_bar = np.sqrt((A * fy) / Ncr)
             phi = 0.5 * (1 + alpha * (lam_bar - 0.2) + lam_bar ** 2)
-            chi = 1 / (phi + np.sqrt(max(phi ** 2 - lam_bar ** 2, 0)))
+            chi = min(1 / (phi + np.sqrt(max(phi ** 2 - lam_bar ** 2, 0))), 1.0)
             NbRd = chi * A * fy
             if NbRd >= f:
                 return {
@@ -907,6 +907,19 @@ def section_class(fy, section, Ned):
 
         limit1 = 396.0 * eps / denom
         limit2 = 456.0 * eps / denom
+        # EC3 Table 5.2 — Class 3 web limit for the compression-dominant range (α > 0.5).
+        # ψ_EC3 is the stress ratio at the web faces (tension-positive convention):
+        #   ψ_EC3 = 1 − 1/α  maps α ∈ (0.5, 1.0) → ψ_EC3 ∈ (−1, 0)
+        # The denominator 0.67 + 0.33·ψ_EC3 = 1 − 0.33/α is bounded in [0.34, 0.67]
+        # for α ∈ (0.5, 1), so division by zero cannot occur.
+        # α = 1 (full compression, ψ_EC3 = 1) is treated separately as 42ε.
+        if alpha >= 1.0:
+            limit3 = 42.0 * eps                                 # EC3: ψ=1, uniform compression
+        else:
+            # 0.5 < alpha < 1.0 — neutral axis is within the web
+            psi_EC3 = 1.0 - 1.0 / alpha                        # ψ_EC3 ∈ (−1, 0)
+            ec3_limit3 = 42.0 * eps / (0.67 + 0.33 * psi_EC3)  # 124ε at α→0.5, 62.7ε at α→1
+            limit3 = max(limit2, ec3_limit3)                    # ensure Class 3 ≥ Class 2
 
     else:
         # Prevent division by zero
@@ -915,12 +928,17 @@ def section_class(fy, section, Ned):
 
         limit1 = 36.0 * eps / alpha
         limit2 = 41.5 * eps / alpha
+        # EC3 Table 5.2 — Class 3 web limit for tension-dominant case (α ≤ 0.5).
+        # At α = 0.5 (pure bending, ψ_EC3 = −1): EC3 gives 124ε.
+        # For α < 0.5 the compression zone is smaller, so the limit is even more
+        # permissive; 124ε is a conservative (safe) lower bound.
+        limit3 = max(limit2, 124.0 * eps)
 
     if lambda_w <= limit1:
         web_class = 1
     elif lambda_w <= limit2:
         web_class = 2
-    elif lambda_w <= 42.0 * eps:
+    elif lambda_w <= limit3:
         web_class = 3
     else:
         web_class = 4
@@ -943,13 +961,15 @@ def eff_L(L, endcondition):
         return None
 
 class Section:
-    def __init__(self, designation, A, Iy, Iz, Wpl, Wel, Iw, It, tw, h, tf, b, iz, seclass=None, alphay=None, alphaz=None):
+    def __init__(self, designation, A, Iy, Iz, Wpl, Wel, Wpl_z, Wel_z, Iw, It, tw, h, tf, b, iz, seclass=None, alphay=None, alphaz=None):
         self.designation = designation
         self.A = A
         self.Iy = Iy
         self.Iz = Iz
-        self.Wpl = Wpl
-        self.Wel = Wel
+        self.Wpl = Wpl       # major-axis plastic modulus W_pl,y
+        self.Wel = Wel       # major-axis elastic modulus W_el,y
+        self.Wpl_z = Wpl_z  # minor-axis plastic modulus W_pl,z
+        self.Wel_z = Wel_z  # minor-axis elastic modulus W_el,z
         self.Iw = Iw
         self.It = It
         self.tw = tw
@@ -975,8 +995,10 @@ def beam_column_table(shape, i):
     A = float(ex.cell(row=i, column=14).value)
     Iy = float(ex.cell(row=i, column=2).value) * 10000
     Iz = float(ex.cell(row=i, column=3).value) * 10000
-    Wpl = float(ex.cell(row=i, column=8).value) * 1000
-    Wel = float(ex.cell(row=i, column=6).value) * 1000
+    Wpl = float(ex.cell(row=i, column=8).value) * 1000    # W_pl,y  (major axis, cm³ → mm³)
+    Wel = float(ex.cell(row=i, column=6).value) * 1000    # W_el,y  (major axis, cm³ → mm³)
+    Wpl_z = float(ex.cell(row=i, column=9).value) * 1000  # W_pl,z  (minor axis, cm³ → mm³)
+    Wel_z = float(ex.cell(row=i, column=7).value) * 1000  # W_el,z  (minor axis, cm³ → mm³)
     Iw = float(ex.cell(row=i, column=12).value) * (100 ** 6)
     It = float(ex.cell(row=i, column=13).value) * 10000
     tw = float(ex.cell(row=i, column=15).value)
@@ -1019,7 +1041,7 @@ def beam_column_table(shape, i):
 
 
 
-    outer = Section(designation, A, Iy, Iz, Wpl, Wel, Iw, It, tw, h,tf, b, iz)
+    outer = Section(designation, A, Iy, Iz, Wpl, Wel, Wpl_z, Wel_z, Iw, It, tw, h, tf, b, iz)
     outer.alphay = alphay
     outer.alphaz = alphaz
     return outer
@@ -1074,8 +1096,8 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         lamz = np.sqrt((pop.A * fy) / Ncrz)
         phiy = 0.5 * (1 + pop.alphay * (lamy - 0.2) + (lamy ** 2))
         phiz = 0.5 * (1 + pop.alphaz * (lamz - 0.2) + (lamz ** 2))
-        chiy = 1 / (phiy + np.sqrt(phiy ** 2 - lamy ** 2))
-        chiz = 1 / (phiz + np.sqrt(phiz ** 2 - lamz ** 2))
+        chiy = min(1 / (phiy + np.sqrt(phiy ** 2 - lamy ** 2)), 1.0)
+        chiz = min(1 / (phiz + np.sqrt(phiz ** 2 - lamz ** 2)), 1.0)
         term2 = (pop.A * fy)
         chi = min(chiy, chiz)
         Nbrd = chi * term2
@@ -1089,7 +1111,7 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
             ((LcrLT ** 2 * G * pop.It) / (np.pi ** 2 * E * pop.Iz))
         )
 
-        # Select correct section modulus
+        # Select correct major-axis section modulus (EC3 Cl. 6.3.2.1)
         if pop.seclass in [1, 2]:
             Wy = pop.Wpl
         else:
@@ -1097,21 +1119,22 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
 
         lamLT = np.sqrt((Wy * fy) / Mcr)
 
-        # LTB imperfection factor (Eurocode typical for rolled I-sections)
+        # LTB imperfection factor per EC3 Table 6.3 (buckling curve b → α_LT = 0.34)
         alpha_LT = 0.34
 
         phi_LT = 0.5 * (1 + alpha_LT * (lamLT - 0.2) + lamLT ** 2)
-        chi_LT = 1 / (phi_LT + np.sqrt(phi_LT ** 2 - lamLT ** 2))
+        chi_LT = min(1 / (phi_LT + np.sqrt(phi_LT ** 2 - lamLT ** 2)), 1.0)
 
         Mbrd = chi_LT * Wy * fy
 
         # -------------------------
-        # MINOR AXIS BENDING RESISTANCE
+        # MINOR AXIS BENDING RESISTANCE (EC3 Cl. 6.2.5)
+        # Use the correct minor-axis section modulus W_pl,z / W_el,z
         # -------------------------
         if pop.seclass in [1, 2]:
-            Wz = pop.Wpl  # approximation (strictly should be separate Wpl,z)
+            Wz = pop.Wpl_z  # minor-axis plastic modulus
         else:
-            Wz = pop.Wel
+            Wz = pop.Wel_z  # minor-axis elastic modulus
 
         Mzrd = Wz * fy
 
@@ -1201,18 +1224,15 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         k_yz = max(0.1, min(k_yz, 2.0))
         k_zy = max(0.1, min(k_zy, 2.0))
 
-        # 4. Apply interaction checks with the new factors
-        # Check for major axis bending with LTB
+        # 4. Apply interaction checks (EC3 Eq. 6.61 and 6.62)
+        # Eq. 6.61 — major-axis bending with LTB
         util_y = (Ned / Nbrd) + k_yy * (Myed / Mbrd) + k_yz * (Mzed / Mzrd)
 
-        # Check for minor axis bending
+        # Eq. 6.62 — minor-axis bending
         util_z = (Ned / Nbrd) + k_zy * (Myed / Mbrd) + k_zz * (Mzed / Mzrd)
 
-        # Also check the simplified Eurocode 3 interaction (optional, for verification)
-        util_simple = (Ned / Nbrd) + 1.0 * (Myed / Mbrd) + 0.6 * (Mzed / Mzrd)
-
-        # Take the maximum utilization from all checks
-        U = max(util_y, util_z, util_simple)
+        # Governing utilisation from EC3 Eq. 6.61 and 6.62 only
+        U = max(util_y, util_z)
         # ===================== END MODIFIED SECTION =====================
 
         # -------------------------
