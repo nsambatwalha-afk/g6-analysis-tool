@@ -6,6 +6,7 @@ import libfunc
 import truss_analysis
 import report_generator
 import section_visualizer
+import frame_analysis as fa
 from indeterminatebeam import *
 
 def steel_input_ui(val=False):
@@ -65,7 +66,8 @@ task = st.sidebar.radio(
         "Single Truss Member Design",
         "Simple Beam Design",
         "Beam Analysis & Design",
-        "Beam-Column Design"
+        "Beam-Column Design",
+        "Frame Analysis & Design",
     )
 )
 
@@ -952,5 +954,423 @@ elif task == "Beam-Column Design":
 
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
+
+# =====================================================
+# FRAME ANALYSIS & DESIGN
+# =====================================================
+
+elif task == "Frame Analysis & Design":
+
+    st.header("Frame Analysis & Design")
+
+    st.info(
+        "Enter your 2-D steel frame below using the tables. "
+        "The tool performs a linear-elastic analysis (direct stiffness method, 3 DOF/node) "
+        "and then designs each beam (UB) and column (UC) to Eurocode 3."
+    )
+
+    # ── Steel properties ──────────────────────────────────────────────────
+    steel_input_ui(True)
+    truss_analysis.condition = st.selectbox("Column Steel Condition", ["Rolled", "Welded"])
+    beam_condition = st.selectbox(
+        "Beam Lateral Condition",
+        ["Restrained", "Unrestrained"],
+        help="Restrained = full lateral restraint (M_pl,Rd). "
+             "Unrestrained = LTB check required (M_b,Rd)."
+    )
+    if beam_condition == "Unrestrained":
+        unrestrained_end = st.selectbox(
+            "Beam End Condition (for LTB effective length)",
+            ["Free", "Partial", "Full", "Cantilever"]
+        )
+    else:
+        unrestrained_end = "Free"
+
+    col_endcondition = st.selectbox(
+        "Column End Condition (for buckling effective length)",
+        ["Pinned-Pinned", "Fixed-Pinned", "Fixed-Fixed", "Fixed-Free"],
+        help="Applied to all columns. Pinned-Pinned is conservative."
+    )
+
+    st.write("---")
+
+    # ── Default data for tables ───────────────────────────────────────────
+    _default_nodes = pd.DataFrame({
+        "Node": [1, 2, 3, 4],
+        "X (m)": [0.0, 6.0, 6.0, 0.0],
+        "Y (m)": [0.0, 0.0, 4.0, 4.0],
+    })
+
+    _default_members = pd.DataFrame({
+        "Member": [1, 2, 3],
+        "Start Node": [1, 4, 2],
+        "End Node":   [4, 3, 3],
+        "Type":       ["Column", "Beam", "Column"],
+    })
+
+    _default_supports = pd.DataFrame({
+        "Node":      [1, 2],
+        "Condition": ["Fixed", "Fixed"],
+    })
+
+    _default_node_loads = pd.DataFrame({
+        "Node":     [4],
+        "Fx (kN)":  [15.0],
+        "Fy (kN)":  [0.0],
+        "Mz (kNm)": [0.0],
+    })
+
+    _default_udl = pd.DataFrame({
+        "Member":    [2],
+        "wx (kN/m)": [0.0],
+        "wy (kN/m)": [-25.0],
+    })
+
+    # ── Nodes ─────────────────────────────────────────────────────────────
+    st.subheader("① Nodes")
+    st.caption("One row per node. Coordinates in metres (origin at bottom-left is conventional).")
+    nodes_df = st.data_editor(
+        _default_nodes,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Node":   st.column_config.NumberColumn("Node ID", min_value=1, step=1, format="%d"),
+            "X (m)":  st.column_config.NumberColumn("X  (m)", format="%.3f"),
+            "Y (m)":  st.column_config.NumberColumn("Y  (m)", format="%.3f"),
+        },
+        key="frame_nodes"
+    )
+
+    # ── Members ───────────────────────────────────────────────────────────
+    st.subheader("② Members")
+    st.caption(
+        "Connect nodes to form the frame. "
+        "Choose **Beam** (horizontal / inclined, designed as UB) or "
+        "**Column** (vertical, designed as UC with axial + bending)."
+    )
+    members_df = st.data_editor(
+        _default_members,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Member":     st.column_config.NumberColumn("Member ID", min_value=1, step=1, format="%d"),
+            "Start Node": st.column_config.NumberColumn("Start Node", min_value=1, step=1, format="%d"),
+            "End Node":   st.column_config.NumberColumn("End Node",   min_value=1, step=1, format="%d"),
+            "Type":       st.column_config.SelectboxColumn("Type", options=["Beam", "Column"]),
+        },
+        key="frame_members"
+    )
+
+    # ── Supports ──────────────────────────────────────────────────────────
+    st.subheader("③ Support Conditions")
+    supports_df = st.data_editor(
+        _default_supports,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Node":      st.column_config.NumberColumn("Node ID", min_value=1, step=1, format="%d"),
+            "Condition": st.column_config.SelectboxColumn(
+                "Condition",
+                options=["Fixed", "Pinned", "Roller (H)", "Roller (V)"]
+            ),
+        },
+        key="frame_supports"
+    )
+
+    st.write("---")
+
+    # ── Loads ──────────────────────────────────────────────────────────────
+    st.subheader("④ Loads")
+
+    col_l1, col_l2 = st.columns(2)
+
+    with col_l1:
+        st.markdown("**Nodal Loads**")
+        st.caption("Point forces / moments applied directly at nodes.")
+        node_loads_df = st.data_editor(
+            _default_node_loads,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "Node":     st.column_config.NumberColumn("Node ID", min_value=1, step=1, format="%d"),
+                "Fx (kN)":  st.column_config.NumberColumn("Fx  (kN)", format="%.2f"),
+                "Fy (kN)":  st.column_config.NumberColumn("Fy  (kN)", format="%.2f"),
+                "Mz (kNm)": st.column_config.NumberColumn("Mz  (kNm)", format="%.2f"),
+            },
+            key="frame_node_loads"
+        )
+
+    with col_l2:
+        st.markdown("**Member Distributed Loads (UDL)**")
+        st.caption(
+            "Uniform loads along member length. "
+            "wy is vertical (+ve = upward). wy = −25 kN/m means 25 kN/m downward."
+        )
+        udl_df = st.data_editor(
+            _default_udl,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "Member":    st.column_config.NumberColumn("Member ID", min_value=1, step=1, format="%d"),
+                "wx (kN/m)": st.column_config.NumberColumn("wx  (kN/m)", format="%.2f"),
+                "wy (kN/m)": st.column_config.NumberColumn("wy  (kN/m)", format="%.2f"),
+            },
+            key="frame_udl"
+        )
+
+    st.write("---")
+
+    # ── Run Analysis & Design ──────────────────────────────────────────────
+    if st.button("Analyze & Design Frame 🚀", type="primary"):
+
+        try:
+            # ── Convert DataFrames to lists ─────────────────────────────
+            nodes_list   = nodes_df.dropna(subset=["Node"]).values.tolist()
+            members_list = members_df.dropna(subset=["Member"]).values.tolist()
+            supports_list = supports_df.dropna(subset=["Node"]).values.tolist()
+            node_loads_list = node_loads_df.dropna(subset=["Node"]).values.tolist()
+            udl_list        = udl_df.dropna(subset=["Member"]).values.tolist()
+
+            if len(nodes_list) < 2:
+                st.error("Please define at least 2 nodes.")
+                st.stop()
+            if len(members_list) < 1:
+                st.error("Please define at least 1 member.")
+                st.stop()
+            if len(supports_list) < 1:
+                st.error("Please define at least 1 support.")
+                st.stop()
+
+            # ── Run FEA ─────────────────────────────────────────────────
+            member_results, node_disp = fa.analyse_frame(
+                nodes=nodes_list,
+                members=members_list,
+                supports=supports_list,
+                node_loads=node_loads_list,
+                udl_loads=udl_list,
+            )
+
+            # ── Set globals required by truss_analysis functions ─────────
+            truss_analysis.endcondition = col_endcondition
+
+            member_design = {}
+            design_errors = {}
+
+            for mid, res in member_results.items():
+                L_m   = res["length"]
+                L_mm  = L_m * 1000
+                N_kN  = max(abs(res["N_start"]), abs(res["N_end"]))
+                V_kN  = max(abs(res["V_start"]), abs(res["V_end"]))
+                M_kNm = max(abs(res["M_start"]), abs(res["M_end"]))
+
+                try:
+                    if res["type"] == "Beam":
+                        if beam_condition == "Restrained":
+                            dr = truss_analysis.restrained_beam(M_kNm, V_kN)
+                        else:
+                            truss_analysis.endcondition = unrestrained_end
+                            dr = truss_analysis.unrestrained_beam(M_kNm, V_kN, L_mm)
+                        member_design[mid] = dr
+
+                    else:  # Column
+                        truss_analysis.endcondition = col_endcondition
+                        N_N   = N_kN  * 1000
+                        M_Nmm = M_kNm * 1e6
+                        M1 = abs(res["M_start"])
+                        M2 = abs(res["M_end"])
+                        Mmax = max(M1, M2, 1e-6)
+                        Mmin = max(min(M1, M2), 1e-6)
+                        posseidon = np.clip(Mmax / Mmin, 1.0, 10.0)
+                        C1 = 1.0 / (0.3 + 0.7 * posseidon ** 2)
+                        dr = truss_analysis.beam_column(
+                            L=L_mm, Ned=N_N, Mzed=M_Nmm, Myed=0.0,
+                            shape="UC", C1=C1, all_axis_similar=True,
+                        )
+                        member_design[mid] = dr
+
+                except Exception as exc:
+                    design_errors[mid] = str(exc)
+
+            # ── Store everything in session state so it survives re-runs
+            st.session_state["frame_results"] = {
+                "member_results": member_results,
+                "member_design":  member_design,
+                "design_errors":  design_errors,
+                "nodes_list":     nodes_list,
+                "members_list":   members_list,
+                "supports_list":  supports_list,
+                "node_loads_list": node_loads_list,
+                "udl_list":       udl_list,
+                "grade":          truss_analysis.grade,
+                "beam_condition": beam_condition,
+                "col_condition":  truss_analysis.condition,
+                "col_endcondition": col_endcondition,
+            }
+            # Reset section-view toggles for a fresh run
+            st.session_state["frame_view_sections"] = {}
+
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+
+    # ── Display persisted results (survives "View Section" button clicks) ──
+    if "frame_results" in st.session_state:
+        fr = st.session_state["frame_results"]
+        member_results = fr["member_results"]
+        member_design  = fr["member_design"]
+        design_errors  = fr["design_errors"]
+        nodes_list     = fr["nodes_list"]
+        members_list   = fr["members_list"]
+        supports_list  = fr["supports_list"]
+        node_loads_list = fr["node_loads_list"]
+        udl_list       = fr["udl_list"]
+        _grade         = fr["grade"]
+        _beam_cond     = fr["beam_condition"]
+        _col_cond      = fr["col_condition"]
+        _col_ec        = fr["col_endcondition"]
+
+        if "frame_view_sections" not in st.session_state:
+            st.session_state["frame_view_sections"] = {}
+
+        st.success("✅ Analysis complete!")
+
+        st.subheader("📊 Member End Forces (from elastic analysis)")
+        ana_rows = []
+        for mid, res in member_results.items():
+            N_max = max(abs(res["N_start"]), abs(res["N_end"]))
+            V_max = max(abs(res["V_start"]), abs(res["V_end"]))
+            M_max = max(abs(res["M_start"]), abs(res["M_end"]))
+            ana_rows.append({
+                "Member": mid,
+                "Type":   res["type"],
+                "Length (m)": round(res["length"], 3),
+                "N_start (kN)": round(res["N_start"], 2),
+                "N_end (kN)":   round(res["N_end"], 2),
+                "V_start (kN)": round(res["V_start"], 2),
+                "V_end (kN)":   round(res["V_end"], 2),
+                "M_start (kNm)": round(res["M_start"], 2),
+                "M_end (kNm)":   round(res["M_end"], 2),
+                "Max |N| (kN)":  round(N_max, 2),
+                "Max |V| (kN)":  round(V_max, 2),
+                "Max |M| (kNm)": round(M_max, 2),
+            })
+        st.dataframe(pd.DataFrame(ana_rows), use_container_width=True)
+
+        st.write("---")
+        st.subheader("🔩 Design Results")
+
+        for mid, res in member_results.items():
+            mtype = res["type"]
+
+            with st.container():
+                header_col, btn_col = st.columns([5, 1])
+
+                if mid in design_errors:
+                    with header_col:
+                        st.error(
+                            f"**Member {mid}** ({mtype}) — Design failed: "
+                            f"{design_errors[mid]}"
+                        )
+                    continue
+
+                dr = member_design[mid]
+
+                if mtype == "Beam":
+                    size  = dr.get("Size", "—")
+                    util  = dr.get("Utilization (%)", 0.0)
+                    ok    = util <= 100.0
+                    Mrd   = dr.get("M_Rd (kNm)", 0.0)
+                    Vrd   = dr.get("V_Rd (kN)", 0.0)
+                    M_Ed  = max(abs(res["M_start"]), abs(res["M_end"]))
+                    V_Ed  = max(abs(res["V_start"]), abs(res["V_end"]))
+                    row_d = {
+                        "Member": mid, "Type": "Beam (UB)", "Section": size,
+                        "M_Ed (kNm)": round(M_Ed, 2), "M_Rd (kNm)": round(Mrd, 2),
+                        "V_Ed (kN)":  round(V_Ed, 2), "V_Rd (kN)":  round(Vrd, 2),
+                        "Utilisation (%)": round(util, 1),
+                        "Status": "PASS ✓" if ok else "FAIL ✗",
+                    }
+                    util_str = f"{util:.1f}%"
+                else:
+                    size  = dr.get("Designation", "—")
+                    U     = dr.get("utilisation", 0.0)
+                    ok    = U <= 1.0
+                    Nbrd  = dr.get("N_b_Rd", 0.0) / 1000
+                    N_Ed  = max(abs(res["N_start"]), abs(res["N_end"]))
+                    M_Ed  = max(abs(res["M_start"]), abs(res["M_end"]))
+                    row_d = {
+                        "Member": mid, "Type": "Column (UC)", "Section": size,
+                        "N_Ed (kN)": round(N_Ed, 2), "N_b,Rd (kN)": round(Nbrd, 2),
+                        "M_Ed (kNm)": round(M_Ed, 2),
+                        "Class": dr.get("class", "—"),
+                        "χ_y":  round(dr.get("chi_y",  0), 3),
+                        "χ_z":  round(dr.get("chi_z",  0), 3),
+                        "χ_LT": round(dr.get("chi_LT", 0), 3),
+                        "Utilisation": round(U, 3),
+                        "Status": "PASS ✓" if ok else "FAIL ✗",
+                    }
+                    util_str = f"{U:.3f}"
+
+                with header_col:
+                    if ok:
+                        st.success(
+                            f"**Member {mid}** ({mtype}) — **{size}** — "
+                            f"Utilisation: {util_str}"
+                        )
+                    else:
+                        st.error(
+                            f"**Member {mid}** ({mtype}) — **{size}** — "
+                            f"FAIL — Utilisation: {util_str}"
+                        )
+                    st.dataframe(pd.DataFrame([row_d]), use_container_width=True)
+
+                with btn_col:
+                    st.write("")
+                    st.write("")
+                    if st.button("📐 View\nSection", key=f"view_frame_{mid}"):
+                        current = st.session_state["frame_view_sections"].get(mid, False)
+                        st.session_state["frame_view_sections"][mid] = not current
+
+                # Show section figure if toggled on
+                if st.session_state["frame_view_sections"].get(mid, False):
+                    info = (
+                        f"M_Ed = {round(max(abs(res['M_start']), abs(res['M_end'])), 2):.2f} kNm  |  "
+                        f"V_Ed = {round(max(abs(res['V_start']), abs(res['V_end'])), 2):.2f} kN  |  "
+                        f"N_Ed = {round(max(abs(res['N_start']), abs(res['N_end'])), 2):.2f} kN"
+                    )
+                    if mtype == "Beam":
+                        fig = section_visualizer.visualize_beam_section(
+                            size, grade=_grade,
+                            beam_type=f"{_beam_cond} Beam",
+                            info_text=info,
+                        )
+                    else:
+                        fig = section_visualizer.visualize_beam_column_section(
+                            size, shape="UC", grade=_grade, info_text=info,
+                        )
+                    _show_section_figure(fig, header=f"📐 Member {mid} — {size}")
+
+        # ── Download results sheet ────────────────────────────────────────
+        st.write("---")
+        if member_design:
+            report_bytes = report_generator.frame_design_report(
+                grade=_grade,
+                beam_condition=_beam_cond,
+                col_condition=_col_cond,
+                col_endcondition=_col_ec,
+                member_analysis=member_results,
+                member_design=member_design,
+                nodes=nodes_list,
+                members=members_list,
+                supports=supports_list,
+                node_loads=node_loads_list,
+                udl_loads=udl_list,
+            )
+            st.download_button(
+                label="📥 Download Results Sheet",
+                data=report_bytes,
+                file_name="frame_analysis_design_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
 
 
