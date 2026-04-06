@@ -157,7 +157,7 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
             ax.plot([x - sz * 0.8, x + sz * 0.8], [y - sz, y - sz],
                     color="#374151", linewidth=2, zorder=1)
 
-        elif cond == "Roller (V)":   # vertical roller – free to move horizontally
+        elif cond == "Roller (V)":   # resists vertical load; allows horizontal displacement
             tri = plt.Polygon(
                 [[x, y], [x - sz * 0.6, y - sz], [x + sz * 0.6, y - sz]],
                 closed=True, facecolor="#D1D5DB", **hatch_kw, zorder=1,
@@ -232,10 +232,10 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
             arc_x  = x + radius * np.cos(theta)
             arc_y  = y + radius * np.sin(theta)
             ax.plot(arc_x, arc_y, color="#7C3AED", linewidth=2, zorder=8)
-            # Arrowhead at end of arc
+            # Arrowhead at end of arc – offset scaled to frame geometry
             tip_ang = theta[-1]
-            tip_dx  = -np.sin(tip_ang) * 0.001 * (1 if mz > 0 else -1)
-            tip_dy  =  np.cos(tip_ang) * 0.001 * (1 if mz > 0 else -1)
+            tip_dx  = -np.sin(tip_ang) * scale * 0.05 * (1 if mz > 0 else -1)
+            tip_dy  =  np.cos(tip_ang) * scale * 0.05 * (1 if mz > 0 else -1)
             ax.annotate(
                 "", xy=(arc_x[-1] + tip_dx, arc_y[-1] + tip_dy),
                 xytext=(arc_x[-1], arc_y[-1]),
@@ -247,6 +247,7 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
                     path_effects=[pe.withStroke(linewidth=2, foreground="white")])
 
     # ── Draw UDLs ────────────────────────────────────────────────────────
+    _UDL_N_ARROWS = 7   # number of arrow intervals along each loaded member
     for _, row in udl_df.dropna(subset=["Member"]).iterrows():
         mid = int(row["Member"])
         wx  = float(row.get("wx (kN/m)", 0) or 0)
@@ -255,9 +256,8 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
         if mid not in member_coords:
             continue
         x1, y1, x2, y2 = member_coords[mid]
-        n_arrows = 7
-        for i in range(n_arrows + 1):
-            t  = i / n_arrows
+        for i in range(_UDL_N_ARROWS + 1):
+            t  = i / _UDL_N_ARROWS
             bx = x1 + t * (x2 - x1)
             by = y1 + t * (y2 - y1)
             # Local unit vectors along and normal to member
