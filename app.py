@@ -1400,8 +1400,8 @@ elif task == "Frame Analysis & Design":
         "**Beam** members that carry significant axial force alongside bending "
         "are automatically reclassified as **Beam-Columns** and designed to "
         "EC3 §6.3.3 (N+M interaction check) using UB sections. "
-        "Similarly, **Column** members that carry significant bending moments "
-        "(per EC3 §6.3.3) are flagged and designed as **Beam-Columns** using UC sections."
+        "Similarly, **Column** members with any bending moment greater than zero "
+        "are flagged as **Beam-Columns** and designed per EC3 §6.3.3 using UC sections."
     )
     members_df = st.data_editor(
         _default_members,
@@ -1512,11 +1512,13 @@ elif task == "Frame Analysis & Design":
             design_errors = {}
             member_effective_types = {}
 
-            # Thresholds for beam-column detection: a Beam member with axial
+            # Threshold for beam-column detection: a Beam member with axial
             # force and bending moment above these limits is redesigned as a
             # beam-column so that the N+M interaction is properly checked.
-            _BC_N_THRESHOLD = 1.0   # kN
-            _BC_M_THRESHOLD = 1.0   # kNm
+            # Note: for Column members the moment threshold is 0 — any moment
+            # greater than zero immediately classifies them as beam-columns.
+            _BC_N_THRESHOLD = 1.0   # kN  (axial force threshold for beams)
+            _BC_M_THRESHOLD = 1.0   # kNm (moment threshold for beams only)
 
             for mid, res in member_results.items():
                 L_m   = res["length"]
@@ -1562,11 +1564,10 @@ elif task == "Frame Analysis & Design":
                         member_design[mid] = dr
 
                     else:  # Column
-                        # A column that carries significant bending moments alongside
-                        # axial compression must be treated as a beam-column per EC3 §6.3.3.
-                        is_col_with_moments = (
-                            N_kN > _BC_N_THRESHOLD and M_kNm > _BC_M_THRESHOLD
-                        )
+                        # Any bending moment greater than zero alongside axial compression
+                        # must be treated as a beam-column per EC3 §6.3.3.
+                        # A tiny epsilon guards against floating-point noise from the FEM solver.
+                        is_col_with_moments = M_kNm > 1e-9
                         member_effective_types[mid] = (
                             "Column-BeamColumn" if is_col_with_moments else "Column"
                         )
