@@ -1468,4 +1468,41 @@ def frame_design_report(
                               passed_str, ok)
         row = _blank(ws, row)
 
+    # ── DESIGN RESULTS — COLUMNS WITH SIGNIFICANT MOMENTS ─────────────────
+    cbc_mids = [mid for mid in member_design if _eff.get(mid) == "Column-BeamColumn"]
+    if cbc_mids:
+        row = _section(ws, row,
+                       "DESIGN RESULTS — Columns with Significant Moments (UC sections, EC3 §6.3.3)")
+        row = _step(ws, row, "Note",
+                    "These members were specified as Columns but carry significant "
+                    "bending moments alongside axial compression. Per EC3 §6.3.3, "
+                    "they have been designed as Beam-Columns (N+M interaction check).",
+                    "", "")
+        row = _step(ws, row, "Member", "Section",
+                    "N_b,Rd (kN)  |  N_Ed (kN)  |  M_Ed (kNm)  |  Class",
+                    "Utilisation  |  χ_y  |  χ_z  |  χ_LT  |  Status")
+        for mid in cbc_mids:
+            dr    = member_design[mid]
+            ar    = member_analysis[mid]
+            N_Ed  = max(abs(ar["N_start"]), abs(ar["N_end"]))
+            M_Ed  = max(abs(ar["M_start"]), abs(ar["M_end"]))
+            U     = dr.get("utilisation", 0.0)
+            ok    = U <= 1.0
+            size  = dr.get("Designation", "—")
+            Nbrd  = dr.get("N_b_Rd", 0.0)
+            cls   = dr.get("class", "—")
+            chiy  = dr.get("chi_y",  0.0)
+            chiz  = dr.get("chi_z",  0.0)
+            chiLT = dr.get("chi_LT", 0.0)
+            n_str = (f"N_b,Rd={_fmt(Nbrd/1000,2)} kN | N_Ed={_fmt(N_Ed,2)} kN | "
+                     f"M_Ed={_fmt(M_Ed,2)} kNm | Class {cls}")
+            u_str = (f"U={_fmt(U,3)} | χ_y={_fmt(chiy,3)} | "
+                     f"χ_z={_fmt(chiz,3)} | χ_LT={_fmt(chiLT,3)}")
+            row = _step(ws, row, f"Member {mid}", size, n_str, u_str)
+            passed_str = "PASS ✓" if ok else "FAIL ✗"
+            row = _result_row(ws, row,
+                              f"Member {mid} — {size}  |  Utilisation {_fmt(U,3)}",
+                              passed_str, ok)
+        row = _blank(ws, row)
+
     return _wb_bytes(wb)

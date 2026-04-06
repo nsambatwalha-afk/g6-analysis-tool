@@ -1399,7 +1399,9 @@ elif task == "Frame Analysis & Design":
         "**Column** (vertical, designed as UC with axial + bending). "
         "**Beam** members that carry significant axial force alongside bending "
         "are automatically reclassified as **Beam-Columns** and designed to "
-        "EC3 §6.3.3 (N+M interaction check) using UB sections."
+        "EC3 §6.3.3 (N+M interaction check) using UB sections. "
+        "Similarly, **Column** members that carry significant bending moments "
+        "(per EC3 §6.3.3) are flagged and designed as **Beam-Columns** using UC sections."
     )
     members_df = st.data_editor(
         _default_members,
@@ -1560,7 +1562,14 @@ elif task == "Frame Analysis & Design":
                         member_design[mid] = dr
 
                     else:  # Column
-                        member_effective_types[mid] = "Column"
+                        # A column that carries significant bending moments alongside
+                        # axial compression must be treated as a beam-column per EC3 §6.3.3.
+                        is_col_with_moments = (
+                            N_kN > _BC_N_THRESHOLD and M_kNm > _BC_M_THRESHOLD
+                        )
+                        member_effective_types[mid] = (
+                            "Column-BeamColumn" if is_col_with_moments else "Column"
+                        )
                         truss_analysis.endcondition = col_endcondition
                         N_N   = N_kN  * 1000
                         M_Nmm = M_kNm * 1e6
@@ -1705,15 +1714,20 @@ elif task == "Frame Analysis & Design":
                     }
                     util_str = f"{U:.3f}"
 
-                else:  # Column
+                else:  # Column or Column-BeamColumn
                     size  = dr.get("Designation", "—")
                     U     = dr.get("utilisation", 0.0)
                     ok    = U <= 1.0
                     Nbrd  = dr.get("N_b_Rd", 0.0) / 1000
                     N_Ed  = max(abs(res["N_start"]), abs(res["N_end"]))
                     M_Ed  = max(abs(res["M_start"]), abs(res["M_end"]))
+                    col_type_label = (
+                        "Column (UC) ⚠️ beam-column"
+                        if eff_type == "Column-BeamColumn"
+                        else "Column (UC)"
+                    )
                     row_d = {
-                        "Member": mid, "Type": "Column (UC)", "Section": size,
+                        "Member": mid, "Type": col_type_label, "Section": size,
                         "N_Ed (kN)": round(N_Ed, 2), "N_b,Rd (kN)": round(Nbrd, 2),
                         "M_Ed (kNm)": round(M_Ed, 2),
                         "Class": dr.get("class", "—"),
@@ -1726,7 +1740,11 @@ elif task == "Frame Analysis & Design":
                     util_str = f"{U:.3f}"
 
                 with header_col:
-                    label = eff_type if eff_type != "Beam-Column" else f"{mtype} → Beam-Column"
+                    label = (
+                        eff_type
+                        if eff_type not in ("Beam-Column", "Column-BeamColumn")
+                        else f"{mtype} → Beam-Column"
+                    )
                     if ok:
                         st.success(
                             f"**Member {mid}** ({label}) — **{size}** — "
@@ -1742,6 +1760,13 @@ elif task == "Frame Analysis & Design":
                             "ℹ️ This member carries both significant axial force and "
                             "bending moment and has been automatically reclassified as a "
                             "**Beam-Column** and designed to EC3 §6.3.3 (N+M interaction)."
+                        )
+                    elif eff_type == "Column-BeamColumn":
+                        st.info(
+                            "ℹ️ This column carries significant bending moments alongside "
+                            "axial compression and has been designed as a **Beam-Column** "
+                            "to EC3 §6.3.3 (N+M interaction check), not as a column with "
+                            "axial force only."
                         )
                     st.dataframe(pd.DataFrame([row_d]), use_container_width=True)
 
