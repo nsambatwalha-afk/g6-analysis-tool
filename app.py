@@ -655,10 +655,15 @@ if task == "🏠 Welcome":
             "role": "Group Member",
             "note": "Contributed to the continuous assessment and verification of design outputs.",
         },
+        {
+            "name": "GitHub Copilot",
+            "role": "🤖 The Tireless Googler (AI Research & Debug Sidekick)",
+            "note": "Served as an AI-powered reference resource — exploring library documentation, suggesting fixes for syntax hiccups, and chasing down those elusive semantic gremlins so the humans could focus on the real engineering.",
+        },
     ]
 
-    team_cols = st.columns(4, gap="medium")
-    icons = ["👨‍💻", "👷", "👷", "👷"]
+    team_cols = st.columns(5, gap="medium")
+    icons = ["👨‍💻", "👷", "👷", "👷", "🤖"]
 
     for col, member, icon in zip(team_cols, team, icons):
         with col:
