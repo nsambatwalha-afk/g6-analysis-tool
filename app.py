@@ -52,6 +52,286 @@ def _show_section_figure(fig, header="📐 Section Visualization"):
         plt.close(fig)
 
 
+def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df):
+    """
+    Return a matplotlib Figure showing the 2-D frame geometry with:
+    - Members coloured by type (Beam / Column) with mid-span length labels
+    - Numbered node markers
+    - Support symbols (Fixed = hatched square, Pinned = triangle,
+      Roller (H) = triangle + horizontal wheel, Roller (V) = triangle + vertical wheel)
+    - Nodal force / moment arrows
+    - UDL arrow-combs along members
+    """
+    import matplotlib.patches as mpatches
+    import matplotlib.patheffects as pe
+
+    # ── Build node lookup ─────────────────────────────────────────────────
+    node_coords = {}
+    for _, row in nodes_df.dropna(subset=["Node"]).iterrows():
+        nid = int(row["Node"])
+        node_coords[nid] = (float(row["X (m)"]), float(row["Y (m)"]))
+
+    if not node_coords:
+        return None
+
+    xs = [c[0] for c in node_coords.values()]
+    ys = [c[1] for c in node_coords.values()]
+    span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+    scale = span * 0.06          # drives symbol sizes relative to frame
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    ax.set_aspect("equal")
+    ax.set_facecolor("#f7f9fc")
+    fig.patch.set_facecolor("#f7f9fc")
+
+    # ── Draw members ─────────────────────────────────────────────────────
+    member_colour = {"Beam": "#2563EB", "Column": "#DC2626"}
+    member_coords = {}   # mid -> (x1,y1,x2,y2)
+
+    for _, row in members_df.dropna(subset=["Member"]).iterrows():
+        mid  = int(row["Member"])
+        sn   = int(row["Start Node"])
+        en   = int(row["End Node"])
+        mtype = str(row["Type"]) if pd.notna(row["Type"]) else "Beam"
+        if sn not in node_coords or en not in node_coords:
+            continue
+        x1, y1 = node_coords[sn]
+        x2, y2 = node_coords[en]
+        member_coords[mid] = (x1, y1, x2, y2)
+        colour = member_colour.get(mtype, "#6B7280")
+
+        ax.plot([x1, x2], [y1, y2], color=colour, linewidth=2.5, solid_capstyle="round", zorder=2)
+
+        # Length label at mid-span
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        length = np.hypot(x2 - x1, y2 - y1)
+        # Perpendicular offset so label doesn't sit on the line
+        dx, dy = x2 - x1, y2 - y1
+        perp = np.array([-dy, dx])
+        if np.linalg.norm(perp) > 0:
+            perp = perp / np.linalg.norm(perp) * scale * 0.55
+        ax.text(
+            mx + perp[0], my + perp[1],
+            f"M{mid}  {length:.2f} m",
+            fontsize=7.5, ha="center", va="center",
+            color=colour, fontweight="bold",
+            path_effects=[pe.withStroke(linewidth=2, foreground="white")],
+            zorder=5,
+        )
+
+    # ── Draw nodes ───────────────────────────────────────────────────────
+    for nid, (x, y) in node_coords.items():
+        ax.plot(x, y, "o", markersize=7, color="#1e293b", zorder=6)
+        ax.text(
+            x + scale * 0.3, y + scale * 0.3,
+            f"N{nid}",
+            fontsize=8, color="#1e293b", fontweight="bold", zorder=7,
+            path_effects=[pe.withStroke(linewidth=2, foreground="white")],
+        )
+
+    # ── Draw supports ────────────────────────────────────────────────────
+    def _support_symbol(ax, x, y, cond, scale):
+        """Draw a support symbol below/beside the node."""
+        sz = scale * 0.9
+        hatch_kw = dict(linewidth=0.8, edgecolor="#374151")
+
+        if cond == "Fixed":
+            # Hatched rectangle centred on (x, y-sz/2), touching the node
+            rect = mpatches.FancyBboxPatch(
+                (x - sz / 2, y - sz),
+                sz, sz,
+                boxstyle="square,pad=0",
+                facecolor="#D1D5DB", hatch="////",
+                **hatch_kw, zorder=1,
+            )
+            ax.add_patch(rect)
+            ax.plot([x - sz * 0.7, x + sz * 0.7], [y - sz, y - sz],
+                    color="#374151", linewidth=2, zorder=1)
+
+        elif cond == "Pinned":
+            tri = plt.Polygon(
+                [[x, y], [x - sz * 0.6, y - sz], [x + sz * 0.6, y - sz]],
+                closed=True, facecolor="#D1D5DB", **hatch_kw, zorder=1,
+            )
+            ax.add_patch(tri)
+            ax.plot([x - sz * 0.8, x + sz * 0.8], [y - sz, y - sz],
+                    color="#374151", linewidth=2, zorder=1)
+
+        elif cond == "Roller (V)":   # resists vertical load; allows horizontal displacement
+            tri = plt.Polygon(
+                [[x, y], [x - sz * 0.6, y - sz], [x + sz * 0.6, y - sz]],
+                closed=True, facecolor="#D1D5DB", **hatch_kw, zorder=1,
+            )
+            ax.add_patch(tri)
+            # Rolling circles below
+            for cx in [x - sz * 0.35, x, x + sz * 0.35]:
+                circ = plt.Circle((cx, y - sz - sz * 0.2), sz * 0.18,
+                                  facecolor="white", **hatch_kw, zorder=1)
+                ax.add_patch(circ)
+
+        elif cond == "Roller (H)":   # horizontal roller – free to move vertically
+            tri = plt.Polygon(
+                [[x, y], [x - sz, y + sz * 0.6], [x - sz, y - sz * 0.6]],
+                closed=True, facecolor="#D1D5DB", **hatch_kw, zorder=1,
+            )
+            ax.add_patch(tri)
+            for cy in [y - sz * 0.35, y, y + sz * 0.35]:
+                circ = plt.Circle((x - sz - sz * 0.2, cy), sz * 0.18,
+                                  facecolor="white", **hatch_kw, zorder=1)
+                ax.add_patch(circ)
+
+    sup_lookup = {}
+    for _, row in supports_df.dropna(subset=["Node"]).iterrows():
+        nid  = int(row["Node"])
+        cond = str(row["Condition"]) if pd.notna(row["Condition"]) else "Fixed"
+        sup_lookup[nid] = cond
+
+    for nid, cond in sup_lookup.items():
+        if nid in node_coords:
+            x, y = node_coords[nid]
+            _support_symbol(ax, x, y, cond, scale)
+
+    # ── Draw nodal loads ─────────────────────────────────────────────────
+    arrow_len = scale * 1.2
+    arrow_kw  = dict(width=scale * 0.07, head_width=scale * 0.25,
+                     head_length=scale * 0.18, length_includes_head=True,
+                     zorder=8)
+
+    for _, row in node_loads_df.dropna(subset=["Node"]).iterrows():
+        nid = int(row["Node"])
+        if nid not in node_coords:
+            continue
+        x, y = node_coords[nid]
+        fx   = float(row.get("Fx (kN)", 0) or 0)
+        fy   = float(row.get("Fy (kN)", 0) or 0)
+        mz   = float(row.get("Mz (kNm)", 0) or 0)
+
+        if abs(fx) > 1e-9:
+            # Arrow tip at node; tail offset in opposite direction
+            sx = x - np.sign(fx) * arrow_len
+            ax.arrow(sx, y, np.sign(fx) * arrow_len, 0,
+                     fc="#F59E0B", ec="#92400E", **arrow_kw)
+            ax.text(sx - np.sign(fx) * scale * 0.1, y + scale * 0.35,
+                    f"{fx:+.1f} kN", fontsize=7, color="#92400E",
+                    ha="center", zorder=9,
+                    path_effects=[pe.withStroke(linewidth=2, foreground="white")])
+
+        if abs(fy) > 1e-9:
+            sy = y - np.sign(fy) * arrow_len
+            ax.arrow(x, sy, 0, np.sign(fy) * arrow_len,
+                     fc="#F59E0B", ec="#92400E", **arrow_kw)
+            ax.text(x + scale * 0.5, sy + np.sign(fy) * scale * 0.3,
+                    f"{fy:+.1f} kN", fontsize=7, color="#92400E",
+                    ha="center", zorder=9,
+                    path_effects=[pe.withStroke(linewidth=2, foreground="white")])
+
+        if abs(mz) > 1e-9:
+            # Arc arrow for moment
+            radius = scale * 0.5
+            theta  = np.linspace(0, 1.3 * np.pi, 60)
+            arc_x  = x + radius * np.cos(theta)
+            arc_y  = y + radius * np.sin(theta)
+            ax.plot(arc_x, arc_y, color="#7C3AED", linewidth=2, zorder=8)
+            # Arrowhead at end of arc – offset scaled to frame geometry
+            tip_ang = theta[-1]
+            tip_dx  = -np.sin(tip_ang) * scale * 0.05 * (1 if mz > 0 else -1)
+            tip_dy  =  np.cos(tip_ang) * scale * 0.05 * (1 if mz > 0 else -1)
+            ax.annotate(
+                "", xy=(arc_x[-1] + tip_dx, arc_y[-1] + tip_dy),
+                xytext=(arc_x[-1], arc_y[-1]),
+                arrowprops=dict(arrowstyle="->", color="#7C3AED", lw=2),
+                zorder=8,
+            )
+            ax.text(x, y + radius * 1.5, f"{mz:+.1f} kNm",
+                    fontsize=7, color="#7C3AED", ha="center", zorder=9,
+                    path_effects=[pe.withStroke(linewidth=2, foreground="white")])
+
+    # ── Draw UDLs ────────────────────────────────────────────────────────
+    _UDL_N_ARROWS = 7   # number of arrow intervals along each loaded member
+    for _, row in udl_df.dropna(subset=["Member"]).iterrows():
+        mid = int(row["Member"])
+        wx  = float(row.get("wx (kN/m)", 0) or 0)
+        wy  = float(row.get("wy (kN/m)", 0) or 0)
+
+        if mid not in member_coords:
+            continue
+        x1, y1, x2, y2 = member_coords[mid]
+        for i in range(_UDL_N_ARROWS + 1):
+            t  = i / _UDL_N_ARROWS
+            bx = x1 + t * (x2 - x1)
+            by = y1 + t * (y2 - y1)
+            # Local unit vectors along and normal to member
+            along = np.array([x2 - x1, y2 - y1])
+            L     = np.linalg.norm(along)
+            if L < 1e-9:
+                continue
+            along /= L
+            # Normal points 90° CCW (for wy upward = positive)
+            norm_vec = np.array([-along[1], along[0]])
+
+            # Resultant load vector in global axes
+            load_vec = np.array([wx, wy])
+            if np.linalg.norm(load_vec) < 1e-9:
+                continue
+            load_dir = load_vec / np.linalg.norm(load_vec)
+            arr_len  = arrow_len * 0.6
+
+            ax.arrow(bx - load_dir[0] * arr_len, by - load_dir[1] * arr_len,
+                     load_dir[0] * arr_len, load_dir[1] * arr_len,
+                     fc="#10B981", ec="#065F46",
+                     width=scale * 0.04,
+                     head_width=scale * 0.18,
+                     head_length=scale * 0.12,
+                     length_includes_head=True, zorder=7)
+
+        # Label at midpoint
+        mx2, my2 = (x1 + x2) / 2, (y1 + y2) / 2
+        along2   = np.array([x2 - x1, y2 - y1])
+        L2       = np.linalg.norm(along2)
+        if L2 > 1e-9:
+            norm2 = np.array([-along2[1], along2[0]]) / L2
+        else:
+            norm2 = np.array([0.0, 1.0])
+
+        load_vec2 = np.array([wx, wy])
+        if np.linalg.norm(load_vec2) > 1e-9:
+            load_dir2 = load_vec2 / np.linalg.norm(load_vec2)
+            offset    = -load_dir2 * arrow_len * 0.8 + norm2 * scale * 0.2
+            parts = []
+            if abs(wx) > 1e-9:
+                parts.append(f"wx={wx:+.1f}")
+            if abs(wy) > 1e-9:
+                parts.append(f"wy={wy:+.1f}")
+            ax.text(mx2 + offset[0], my2 + offset[1],
+                    "\n".join(parts) + " kN/m",
+                    fontsize=7, color="#065F46", ha="center", zorder=9,
+                    path_effects=[pe.withStroke(linewidth=2, foreground="white")])
+
+    # ── Legend & labels ──────────────────────────────────────────────────
+    legend_handles = [
+        mpatches.Patch(color="#2563EB", label="Beam"),
+        mpatches.Patch(color="#DC2626", label="Column"),
+        mpatches.Patch(color="#F59E0B", label="Applied load"),
+        mpatches.Patch(color="#10B981", label="Distributed load (UDL)"),
+        mpatches.Patch(color="#7C3AED", label="Applied moment"),
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=8,
+              framealpha=0.9, edgecolor="#CBD5E1")
+
+    ax.set_xlabel("X (m)", fontsize=9)
+    ax.set_ylabel("Y (m)", fontsize=9)
+    ax.set_title("2-D Frame Geometry", fontsize=12, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.4, color="#CBD5E1")
+
+    # Padding so symbols aren't clipped
+    pad = scale * 2.0
+    ax.set_xlim(min(xs) - pad, max(xs) + pad)
+    ax.set_ylim(min(ys) - pad * 1.5, max(ys) + pad)
+
+    fig.tight_layout()
+    return fig
+
+
 st.set_page_config(page_title="Structural Engineering Toolkit", layout="wide")
 
 st.title("🏗 Structural Engineering Toolkit")
@@ -1400,8 +1680,8 @@ elif task == "Frame Analysis & Design":
         "**Beam** members that carry significant axial force alongside bending "
         "are automatically reclassified as **Beam-Columns** and designed to "
         "EC3 §6.3.3 (N+M interaction check) using UB sections. "
-        "Similarly, **Column** members that carry significant bending moments "
-        "(per EC3 §6.3.3) are flagged and designed as **Beam-Columns** using UC sections."
+        "Similarly, **Column** members with any bending moment greater than zero "
+        "are flagged as **Beam-Columns** and designed per EC3 §6.3.3 using UC sections."
     )
     members_df = st.data_editor(
         _default_members,
@@ -1475,6 +1755,22 @@ elif task == "Frame Analysis & Design":
 
     st.write("---")
 
+    # ── Optional frame geometry preview ───────────────────────────────────
+    col_vis, col_run = st.columns([1, 2])
+    with col_vis:
+        show_vis = st.button("👁 Visualize Frame", help="Preview the frame geometry, supports and loads before running the analysis.")
+    if show_vis:
+        with st.spinner("Rendering frame…"):
+            vis_fig = plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df)
+        if vis_fig is not None:
+            st.subheader("🖼 Frame Geometry Preview")
+            st.pyplot(vis_fig, use_container_width=True)
+            plt.close(vis_fig)
+        else:
+            st.warning("No valid nodes found – please fill in the Nodes table first.")
+
+    st.write("---")
+
     # ── Run Analysis & Design ──────────────────────────────────────────────
     if st.button("Analyze & Design Frame 🚀", type="primary"):
 
@@ -1512,11 +1808,13 @@ elif task == "Frame Analysis & Design":
             design_errors = {}
             member_effective_types = {}
 
-            # Thresholds for beam-column detection: a Beam member with axial
+            # Threshold for beam-column detection: a Beam member with axial
             # force and bending moment above these limits is redesigned as a
             # beam-column so that the N+M interaction is properly checked.
-            _BC_N_THRESHOLD = 1.0   # kN
-            _BC_M_THRESHOLD = 1.0   # kNm
+            # Note: for Column members the moment threshold is 0 — any moment
+            # greater than zero immediately classifies them as beam-columns.
+            _BC_N_THRESHOLD = 1.0   # kN  (axial force threshold for beams)
+            _BC_M_THRESHOLD = 1.0   # kNm (moment threshold for beams only)
 
             for mid, res in member_results.items():
                 L_m   = res["length"]
@@ -1562,11 +1860,10 @@ elif task == "Frame Analysis & Design":
                         member_design[mid] = dr
 
                     else:  # Column
-                        # A column that carries significant bending moments alongside
-                        # axial compression must be treated as a beam-column per EC3 §6.3.3.
-                        is_col_with_moments = (
-                            N_kN > _BC_N_THRESHOLD and M_kNm > _BC_M_THRESHOLD
-                        )
+                        # Any bending moment greater than zero alongside axial compression
+                        # must be treated as a beam-column per EC3 §6.3.3.
+                        # A tiny epsilon guards against floating-point noise from the FEM solver.
+                        is_col_with_moments = M_kNm > 1e-9
                         member_effective_types[mid] = (
                             "Column-BeamColumn" if is_col_with_moments else "Column"
                         )
