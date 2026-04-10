@@ -82,7 +82,9 @@ def _fef_local(p_x, p_y, L):
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def analyse_frame(nodes, members, supports, node_loads, udl_loads):
+def analyse_frame(nodes, members, supports, node_loads, udl_loads,
+                  E=_E, I_beam=_I_BEAM, A_beam=_A_BEAM,
+                  I_col=_I_COL, A_col=_A_COL):
     """
     Perform a linear-elastic 2-D rigid frame analysis.
 
@@ -98,6 +100,11 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads):
     udl_loads  : list of [member_id (int), wx (kN/m), wy (kN/m)]
         wx: horizontal component of distributed load (+ve = rightward).
         wy: vertical component of distributed load   (+ve = upward).
+    E      : Young's modulus (kN/m²). Default 210 GPa.
+    I_beam : Second moment of area for beam members (m⁴).
+    A_beam : Cross-sectional area for beam members (m²).
+    I_col  : Second moment of area for column members (m⁴).
+    A_col  : Cross-sectional area for column members (m²).
 
     Returns
     -------
@@ -142,10 +149,10 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads):
             raise ValueError(f"Member {mid} has zero length. Check node coordinates.")
         angle = float(np.arctan2(yj - yi, xj - xi))
 
-        I = _I_BEAM if mtype == "Beam" else _I_COL
-        A = _A_BEAM if mtype == "Beam" else _A_COL
+        I = I_beam if mtype == "Beam" else I_col
+        A = A_beam if mtype == "Beam" else A_col
 
-        k_loc  = _local_stiffness(_E, A, I, L)
+        k_loc  = _local_stiffness(E, A, I, L)
         T      = _transform(angle)
         K_glob = T.T @ k_loc @ T
 

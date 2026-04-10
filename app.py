@@ -1622,6 +1622,54 @@ elif task == "Frame Analysis & Design":
         help="Applied to all columns. Pinned-Pinned is conservative."
     )
 
+    # ── Analysis section properties ───────────────────────────────────────
+    with st.expander("⚙️ Analysis Section Properties", expanded=False):
+        st.caption(
+            "Representative section properties used for the elastic stiffness analysis. "
+            "The stiffer a member, the more moment it attracts. "
+            "For a quick hand-check with equal stiffness, set I_beam = I_col. "
+            "Actual design sections are selected afterwards from the EC3 checks."
+        )
+        _sp_col1, _sp_col2, _sp_col3 = st.columns(3)
+        with _sp_col1:
+            E_GPa = st.number_input(
+                "E (GPa)", value=210.0, min_value=1.0, step=1.0,
+                help="Young's modulus (default 210 GPa for steel).",
+                key="fa_E"
+            )
+        with _sp_col2:
+            st.markdown("**Beam members**")
+            I_beam_cm4 = st.number_input(
+                "I_beam (cm⁴)", value=29400.0, min_value=1.0, step=100.0,
+                help="Second moment of area for horizontal beam members. "
+                     "Default ≈ UB 457×191×67.",
+                key="fa_I_beam"
+            )
+            A_beam_cm2 = st.number_input(
+                "A_beam (cm²)", value=85.4, min_value=0.1, step=1.0,
+                help="Cross-sectional area for beam members.",
+                key="fa_A_beam"
+            )
+        with _sp_col3:
+            st.markdown("**Column members**")
+            I_col_cm4 = st.number_input(
+                "I_col (cm⁴)", value=11360.0, min_value=1.0, step=100.0,
+                help="Second moment of area for column members. "
+                     "Default ≈ UC 254×254×73.",
+                key="fa_I_col"
+            )
+            A_col_cm2 = st.number_input(
+                "A_col (cm²)", value=93.1, min_value=0.1, step=1.0,
+                help="Cross-sectional area for column members.",
+                key="fa_A_col"
+            )
+        # Convert to SI (m⁴ and m²)
+        _fa_E      = E_GPa     * 1e6          # kN/m²
+        _fa_I_beam = I_beam_cm4 * 1e-8        # m⁴
+        _fa_A_beam = A_beam_cm2 * 1e-4        # m²
+        _fa_I_col  = I_col_cm4  * 1e-8        # m⁴
+        _fa_A_col  = A_col_cm2  * 1e-4        # m²
+
     st.write("---")
 
     # ── Default data for tables ───────────────────────────────────────────
@@ -1799,6 +1847,11 @@ elif task == "Frame Analysis & Design":
                 supports=supports_list,
                 node_loads=node_loads_list,
                 udl_loads=udl_list,
+                E=_fa_E,
+                I_beam=_fa_I_beam,
+                A_beam=_fa_A_beam,
+                I_col=_fa_I_col,
+                A_col=_fa_A_col,
             )
 
             # ── Set globals required by truss_analysis functions ─────────
