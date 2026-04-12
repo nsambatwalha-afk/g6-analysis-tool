@@ -1623,11 +1623,41 @@ elif task == "Frame Analysis & Design":
     )
 
     # ── Analysis section properties ───────────────────────────────────────
+    # Assumed uniform-stiffness values (non-zero → no divide-by-zero risk)
+    _UNIFORM_E_GPA  = 210.0      # GPa  — standard steel Young's modulus
+    _UNIFORM_I_CM4  = 10_000.0   # cm⁴  — uniform for beams and columns
+    _UNIFORM_A_CM2  = 100.0      # cm²  — uniform for beams and columns
+
     with st.expander("⚙️ Analysis Section Properties", expanded=False):
+        # ── Uniform-stiffness shortcut ────────────────────────────────────
+        uniform_stiffness = st.checkbox(
+            "Assume uniform section stiffness (EI = constant across all members)",
+            key="fa_uniform_stiffness",
+            help=(
+                "When checked, identical E, I, and A values are applied to every beam "
+                "and column so that relative stiffness ratios are equal across the frame. "
+                "This is the standard academic assumption where EI = constant and the "
+                "actual magnitude does not affect the distribution of forces. "
+                f"Assumed values: E = {_UNIFORM_E_GPA:.0f} GPa, "
+                f"I = {_UNIFORM_I_CM4:,.0f} cm⁴, A = {_UNIFORM_A_CM2:.0f} cm²."
+            ),
+        )
+
+        # When uniform stiffness is active, push the assumed values into
+        # session state before the widgets are rendered so they display the
+        # correct (and identical) numbers for beams and columns.
+        if uniform_stiffness:
+            st.session_state["fa_E"]      = _UNIFORM_E_GPA
+            st.session_state["fa_I_beam"] = _UNIFORM_I_CM4
+            st.session_state["fa_A_beam"] = _UNIFORM_A_CM2
+            st.session_state["fa_I_col"]  = _UNIFORM_I_CM4
+            st.session_state["fa_A_col"]  = _UNIFORM_A_CM2
+
         st.caption(
             "Representative section properties used for the elastic stiffness analysis. "
             "The stiffer a member, the more moment it attracts. "
-            "For a quick hand-check with equal stiffness, set I_beam = I_col. "
+            "For a quick hand-check with equal stiffness, tick the checkbox above or set "
+            "I_beam = I_col manually. "
             "Actual design sections are selected afterwards from the EC3 checks."
         )
         _sp_col1, _sp_col2, _sp_col3 = st.columns(3)
@@ -1635,7 +1665,8 @@ elif task == "Frame Analysis & Design":
             E_GPa = st.number_input(
                 "E (GPa)", value=210.0, min_value=1.0, step=1.0,
                 help="Young's modulus (default 210 GPa for steel).",
-                key="fa_E"
+                key="fa_E",
+                disabled=uniform_stiffness,
             )
         with _sp_col2:
             st.markdown("**Beam members**")
@@ -1643,12 +1674,14 @@ elif task == "Frame Analysis & Design":
                 "I_beam (cm⁴)", value=29400.0, min_value=1.0, step=100.0,
                 help="Second moment of area for horizontal beam members. "
                      "Default ≈ UB 457×191×67.",
-                key="fa_I_beam"
+                key="fa_I_beam",
+                disabled=uniform_stiffness,
             )
             A_beam_cm2 = st.number_input(
                 "A_beam (cm²)", value=85.4, min_value=0.1, step=1.0,
                 help="Cross-sectional area for beam members.",
-                key="fa_A_beam"
+                key="fa_A_beam",
+                disabled=uniform_stiffness,
             )
         with _sp_col3:
             st.markdown("**Column members**")
@@ -1656,12 +1689,14 @@ elif task == "Frame Analysis & Design":
                 "I_col (cm⁴)", value=11360.0, min_value=1.0, step=100.0,
                 help="Second moment of area for column members. "
                      "Default ≈ UC 254×254×73.",
-                key="fa_I_col"
+                key="fa_I_col",
+                disabled=uniform_stiffness,
             )
             A_col_cm2 = st.number_input(
                 "A_col (cm²)", value=93.1, min_value=0.1, step=1.0,
                 help="Cross-sectional area for column members.",
-                key="fa_A_col"
+                key="fa_A_col",
+                disabled=uniform_stiffness,
             )
         # Convert to SI (m⁴ and m²)
         _fa_E      = E_GPa     * 1e6          # kN/m²
