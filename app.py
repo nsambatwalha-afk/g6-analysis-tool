@@ -2008,7 +2008,7 @@ elif task == "Frame Analysis & Design":
                         posseidon = np.clip(Mmax / Mmin, 1.0, 10.0)
                         C1 = 1.0 / (0.3 + 0.7 * posseidon ** 2)
                         dr = truss_analysis.beam_column(
-                            L=L_mm, Ned=N_N, Mzed=M_Nmm, Myed=0.0,
+                            L=L_mm, Ned=N_N, Myed=M_Nmm, Mzed=0.0,
                             shape="UB", C1=C1, all_axis_similar=True,
                         )
                         member_design[mid] = dr
@@ -2040,7 +2040,7 @@ elif task == "Frame Analysis & Design":
                         posseidon = np.clip(Mmax / Mmin, 1.0, 10.0)
                         C1 = 1.0 / (0.3 + 0.7 * posseidon ** 2)
                         dr = truss_analysis.beam_column(
-                            L=L_mm, Ned=N_N, Mzed=M_Nmm, Myed=0.0,
+                            L=L_mm, Ned=N_N, Myed=M_Nmm, Mzed=0.0,
                             shape="UC", C1=C1, all_axis_similar=True,
                         )
                         member_design[mid] = dr
