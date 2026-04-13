@@ -224,6 +224,196 @@ def _ub_extended(val):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Full extended section databases for beam_column, restrained_beam and
+# unrestrained_beam.  These lists store all EC3 section properties needed by
+# those functions so they can fall back gracefully when the xlsx tables are
+# exhausted, matching the pattern introduced for table_reader in _UB_EXTENDED
+# / _UC_EXTENDED.
+#
+# Tuple layout (mirrors UB-2 / UC-2 xlsx column order):
+#   (designation, A mm², Iy cm⁴, Iz cm⁴, ry cm, rz cm,
+#    Wel,y cm³, Wel,z cm³, Wpl,y cm³, Wpl,z cm³,
+#    Iw dm⁶, It cm⁴, tw mm, h mm, tf mm, b mm)
+#
+# Properties estimated consistently with _UB_EXTENDED / _UC_EXTENDED:
+#   Iz = A × rz²   (Iz values taken from _UB_EXTENDED / _UC_EXTENDED)
+#   Iy = A × ry²   (ry per series: 762×267→27.7 cm, 610×305→24.6 cm,
+#                   914×305→37.8 cm, 1016×305→40.0 cm)
+#   Wel = 2Iy/h ;  Wpl ≈ 1.12 × Wel  (shape factor ≈ 1.12)
+#   Iw  ≈ Iz × h² / 4  (cm⁴ × cm² = cm⁶, converted to dm⁶ for storage)
+#   It  ≈ (2b tf³ + (h−2tf) tw³) / 3  (Saint-Venant torsion, mm⁴ → cm⁴)
+# ---------------------------------------------------------------------------
+_UB_FULL_EXTENDED = [
+    # desig                 A      Iy      Iz    ry    rz  Wely  Welz   Wply  Wplz    Iw    It   tw    h   tf    b
+    ("762x267x173 UB",  22000, 168804,  6850, 27.7, 5.58, 4431,  513,  4963,  770,  9.94,  255, 14,  762, 22, 267),
+    ("610x305x179 UB",  22800, 137977,  9310, 24.6, 6.39, 4524,  610,  5067,  915,  8.66,  359, 13,  610, 25, 305),
+    ("762x267x197 UB",  25100, 192590,  8170, 27.7, 5.70, 5055,  612,  5662,  918, 11.86,  430, 15,  762, 27, 267),
+    ("762x267x220 UB",  28000, 214841,  8980, 27.7, 5.66, 5640,  673,  6317, 1010, 13.04,  626, 16,  762, 31, 267),
+    ("914x305x224 UB",  28500, 407219, 11200, 37.8, 6.27, 8913,  734,  9983, 1101, 23.39,  399, 16,  914, 24, 305),
+    ("762x267x251 UB",  32000, 245533, 10400, 27.7, 5.70, 6445,  779,  7219, 1169, 15.10, 1089, 17,  762, 38, 267),
+    ("1016x305x272 UB", 34600, 553600, 14500, 40.0, 6.47,10898,  951, 12206, 1427, 37.42,  796, 16, 1016, 32, 305),
+    ("914x305x289 UB",  36800, 525813, 15600, 37.8, 6.51,11507, 1023, 12888, 1535, 32.58, 1036, 18,  914, 35, 305),
+    ("1016x305x349 UB", 44500, 712000, 18500, 40.0, 6.45,14016, 1213, 15698, 1820, 47.73, 1944, 19, 1016, 44, 305),
+    ("914x305x381 UB",  48500, 692987, 23200, 37.8, 6.92,15165, 1521, 16985, 2282, 48.45, 2725, 23,  914, 49, 305),
+    ("1016x305x487 UB", 62000, 992000, 31700, 40.0, 7.15,19528, 2079, 21871, 3119, 81.81, 5435, 27, 1016, 62, 305),
+]
+
+_UC_FULL_EXTENDED = [
+    # desig                   A       Iy      Iz    ry     rz   Wely   Welz   Wply   Wplz     Iw      It    tw    h    tf    b
+    ("356x406x744 UC",   94800, 360477, 118000, 19.5, 11.16, 14803,  5566, 16580,  8349,  69.9, 22603,  58, 487,  90, 424),
+    ("356x406x900 UC",  114600, 458400, 147000, 20.0, 11.32, 18336,  6934, 20536, 10401,  91.9, 42868,  70, 500, 112, 424),
+    ("356x406x1086 UC", 138300, 553200, 182000, 20.0, 11.47, 21074,  8585, 23603, 12878, 125.4, 78863,  82, 525, 138, 424),
+]
+
+
+def _bc_section_from_row(row):
+    """Create a Section object from a _UB_FULL_EXTENDED or _UC_FULL_EXTENDED row.
+
+    Applies the same unit conversions and alphay/alphaz logic as
+    beam_column_table() so the returned object is a drop-in replacement.
+    """
+    global condition, grade
+    desig, A, Iy_cm4, Iz_cm4, ry_cm, rz_cm, Wely, Welz, Wply, Wplz, Iw_dm6, It_cm4, tw, h, tf, b = row
+    Iy    = Iy_cm4 * 10000.0        # mm⁴
+    Iz    = Iz_cm4 * 10000.0        # mm⁴
+    Wpl   = Wply   * 1000.0         # mm³ (major axis plastic)
+    Wel   = Wely   * 1000.0         # mm³ (major axis elastic)
+    Wpl_z = Wplz   * 1000.0         # mm³ (minor axis plastic)
+    Wel_z = Welz   * 1000.0         # mm³ (minor axis elastic)
+    Iw    = Iw_dm6 * (100 ** 6)     # mm⁶
+    It    = It_cm4 * 10000.0        # mm⁴
+    iz    = rz_cm  * 10.0           # mm
+
+    # Imperfection factors – identical logic to beam_column_table()
+    if condition == "Rolled":
+        if (h / b) <= 1.2 and grade != "S460":
+            alphay, alphaz = (0.34, 0.49) if tf <= 100 else (0.76, 0.76)
+        elif (h / b) > 1.2 and grade != "S460":
+            alphay, alphaz = (0.21, 0.34) if tf <= 40 else (0.34, 0.49)
+        else:
+            if tf <= 40:
+                alphay = alphaz = 0.13
+            elif tf > 100:
+                alphay = alphaz = 0.49
+            else:  # 40 < tf <= 100
+                alphay = alphaz = 0.21
+    else:
+        alphay, alphaz = (0.34, 0.49) if tf <= 40 else (0.49, 0.76)
+
+    sec = Section(desig, A, Iy, Iz, Wpl, Wel, Wpl_z, Wel_z, Iw, It, tw, h, tf, b, iz)
+    sec.alphay = alphay
+    sec.alphaz = alphaz
+    return sec
+
+
+def _bc_ec3_check(pop, fy, Ned, Mzed, Myed, Lcry, Lcrz, E, G, C1):
+    """EC3 §6.3.3 beam-column interaction check for a Section object.
+
+    Returns a result dict when U ≤ 1.0, or None when the section is
+    inadequate (or Class 4).  Extracted from beam_column() so the same
+    logic can be applied to both xlsx-sourced and extended sections.
+    """
+    seclass = section_class(fy, pop, Ned)
+    pop.seclass = seclass
+    if seclass in (1, 2):
+        Nrd = pop.A * fy
+    elif seclass == 3:
+        Nrd = pop.A * fy
+    else:
+        return None  # Class 4 – skip
+
+    Ncry = (np.pi ** 2 * E * pop.Iy) / (Lcry ** 2)
+    Ncrz = (np.pi ** 2 * E * pop.Iz) / (Lcrz ** 2)
+    lamy = np.sqrt((pop.A * fy) / Ncry)
+    lamz = np.sqrt((pop.A * fy) / Ncrz)
+    phiy = 0.5 * (1 + pop.alphay * (lamy - 0.2) + lamy ** 2)
+    phiz = 0.5 * (1 + pop.alphaz * (lamz - 0.2) + lamz ** 2)
+    chiy = min(1 / (phiy + np.sqrt(phiy ** 2 - lamy ** 2)), 1.0)
+    chiz = min(1 / (phiz + np.sqrt(phiz ** 2 - lamz ** 2)), 1.0)
+    Nbrd = min(chiy, chiz) * (pop.A * fy)
+
+    LcrLT = Lcry
+    Mcr = C1 * (np.pi ** 2 * E * pop.Iz / LcrLT ** 2) * np.sqrt(
+        (pop.Iw / pop.Iz) + (LcrLT ** 2 * G * pop.It) / (np.pi ** 2 * E * pop.Iz)
+    )
+
+    Wy = pop.Wpl if seclass in (1, 2) else pop.Wel
+    lamLT  = np.sqrt((Wy * fy) / Mcr)
+    phi_LT = 0.5 * (1 + 0.34 * (lamLT - 0.2) + lamLT ** 2)
+    chi_LT = min(1 / (phi_LT + np.sqrt(phi_LT ** 2 - lamLT ** 2)), 1.0)
+    Mbrd   = chi_LT * Wy * fy
+
+    Wz   = pop.Wpl_z if seclass in (1, 2) else pop.Wel_z
+    Mzrd = Wz * fy
+
+    C_my  = max(0.4, 0.6 + 0.4 * 1.0)  # psi_y = 1.0 (uniform moment)
+    C_mz  = C1
+    C_mLT = C1
+
+    gamma_M1 = 1.0
+    n_y = Ned / (chiy * Nrd / gamma_M1) if chiy > 0 else 0
+    n_z = Ned / (chiz * Nrd / gamma_M1) if chiz > 0 else 0
+
+    if seclass in (1, 2):
+        k_yy = C_my * min(1 + (lamy - 0.2) * n_y, 1 + 0.8 * n_y)
+        k_zz = C_mz * min(1 + (2 * lamz - 0.6) * n_z, 1 + 1.4 * n_z)
+        k_yz = 0.6 * k_zz
+        if lamy < 0.4:
+            k_zy = 0.6 * k_yy
+        else:
+            k_zy = max(1 - (0.1 * lamz) / max(C_mLT - 0.25, 0.01) * n_z,
+                       0.6 * k_yy)
+    elif seclass == 3:
+        k_yy = C_my * min(1 + 0.6 * lamy * n_y, 1 + 0.6 * n_y)
+        k_zz = C_mz * min(1 + 0.6 * lamz * n_z, 1 + 0.6 * n_z)
+        k_yz = k_zz
+        if lamy < 0.4:
+            k_zy = 0.8 * k_zz
+        elif lamz < 0.4:
+            k_zy = 0.6 + lamz
+        else:
+            k_zy = max(1 - (0.05 * lamz) / max(C_mLT - 0.25, 0.01) * n_z,
+                       0.6 * k_zz)
+    else:
+        k_yy = 1 + 0.6 * n_y
+        k_zz = 1 + 0.6 * n_z
+        k_yz = 0.6 * k_zz
+        k_zy = 0.6 * k_yy
+
+    k_yy = max(0.1, min(k_yy, 2.0))
+    k_zz = max(0.1, min(k_zz, 2.0))
+    k_yz = max(0.1, min(k_yz, 2.0))
+    k_zy = max(0.1, min(k_zy, 2.0))
+
+    util_y = (Ned / Nbrd) + k_yy * (Myed / Mbrd) + k_yz * (Mzed / Mzrd)
+    util_z = (Ned / Nbrd) + k_zy * (Myed / Mbrd) + k_zz * (Mzed / Mzrd)
+    U = max(util_y, util_z)
+
+    if U > 1.0:
+        return None
+
+    return {
+        "Designation": pop.designation,
+        "class":       pop.seclass,
+        "N_b_Rd":      Nbrd,
+        "M_b_Rd":      Mbrd,
+        "M_z_Rd":      Mzrd,
+        "utilisation": U,
+        "chi_y":       chiy,
+        "chi_z":       chiz,
+        "chi_LT":      chi_LT,
+        "k_yy":        k_yy,
+        "k_zz":        k_zz,
+        "k_yz":        k_yz,
+        "k_zy":        k_zy,
+        "C_my":        C_my,
+        "C_mz":        C_mz,
+        "util_y":      util_y,
+        "util_z":      util_z,
+    }
+
+
 def table_reader(table, val):
     if table == "CHS":
         ex = openpyxl.load_workbook("CHS.xlsx")
@@ -745,6 +935,39 @@ def restrained_beam(M, V):
         size = ex.cell(row=i, column=1).value
 
         if size is None:
+            # xlsx exhausted – fall back to extended UB sections
+            for ext_row in _UB_FULL_EXTENDED:
+                ext_size = ext_row[0]
+                Wyy  = ext_row[8]  * 1000.0   # Wpl,y  mm³
+                Wzz  = ext_row[9]  * 1000.0   # Wpl,z  mm³
+                Wpl  = max(Wyy, Wzz)
+                tw   = float(ext_row[12])
+                h    = float(ext_row[13])
+                tf   = float(ext_row[14])
+                hw   = h - 2 * tf
+                Av   = hw * tw
+                Aw   = hw * tw
+
+                Vpl_Rd = (Av * fy) / (np.sqrt(3) * gamma_M0) / 1000
+                if V > Vpl_Rd:
+                    continue
+
+                Mpl_Rd = (Wpl * fy) / gamma_M0 / 1e6
+                if V / Vpl_Rd <= 0.5:
+                    M_Rd = Mpl_Rd
+                else:
+                    rho  = (2 * V / Vpl_Rd - 1) ** 2
+                    M_Rd = ((Wpl - (rho * Aw ** 2) / (4 * tw)) * fy / gamma_M0) / 1e6
+
+                if M <= M_Rd:
+                    return {
+                        "Type": "Restrained Beam",
+                        "Size": ext_size,
+                        "M_Rd (kNm)": round(M_Rd, 2),
+                        "V_Rd (kN)": round(Vpl_Rd, 2),
+                        "Utilization (%)": round((M / M_Rd) * 100, 2),
+                    }
+
             raise ValueError("No suitable section found in UB table.")
 
         Wyy = float(ex.cell(row=i, column=8).value) * 1000  # mm³
@@ -820,6 +1043,73 @@ def unrestrained_beam(M, V, L):
 
         # ---- Stop if no more sections ----
         if size is None:
+            # xlsx exhausted – fall back to extended UB sections
+            for ext_row in _UB_FULL_EXTENDED:
+                ext_size = ext_row[0]
+                Wpl  = ext_row[8]  * 1000.0    # Wpl,y  mm³
+                iz   = ext_row[5]  * 10.0       # rz (cm) → iz (mm)
+                tw   = float(ext_row[12])
+                h    = float(ext_row[13])
+                tf   = float(ext_row[14])
+                b    = float(ext_row[15])
+
+                if endcondition == "Free":
+                    k = 1.0
+                elif endcondition == "Partial":
+                    k = 0.85
+                elif endcondition == "Full":
+                    k = 0.7
+                elif endcondition == "Cantilever":
+                    k = 2.0
+                else:
+                    raise ValueError("Endcondition not recognized.")
+
+                lamz    = (k * L) / iz
+                laml    = np.pi * np.sqrt(E / fy)
+                lamzba  = lamz / laml
+                lamltb  = 0.9 * lamzba  # EC3 §6.3.2.2: C1=1.0, u=0.9, v=1.0, βw=1.0
+                hoverb  = h / b
+
+                if condition == "Rolled":
+                    alt = 0.34 if hoverb <= 2 else 0.49
+                    phi = 0.5 * (1 + alt * (lamltb - 0.4) + 0.75 * lamltb ** 2)
+                    chi = min(1 / (phi + np.sqrt(phi ** 2 - 0.75 * lamltb ** 2)), 1.0)
+                else:
+                    if hoverb <= 2 and condition == "Welded":
+                        alt = 0.49
+                    elif hoverb > 2 and condition == "Welded":
+                        alt = 0.76
+                    else:
+                        alt = 0.76
+                    phi = 0.5 * (1 + alt * (lamltb - 0.2) + lamltb ** 2)
+                    chi = min(1 / (phi + np.sqrt(phi ** 2 - lamltb ** 2)), 1.0)
+
+                hw     = h - 2 * tf
+                Av     = hw * tw
+                Aw     = hw * tw
+                Vpl_Rd = (Av * fy) / (np.sqrt(3) * gamma_M1) / 1000
+
+                if V > Vpl_Rd:
+                    continue
+
+                if V > 0.5 * Vpl_Rd:
+                    rho       = ((2 * V / Vpl_Rd) - 1) ** 2
+                    W_reduced = Wpl - (rho * Aw ** 2) / (4 * tw)
+                else:
+                    W_reduced = Wpl
+
+                Mbrd = (chi * W_reduced * fy / gamma_M1) / 1e6
+
+                if M <= Mbrd:
+                    return {
+                        "Type": "Unrestrained Beam",
+                        "Size": ext_size,
+                        "x_LT": round(chi, 3),
+                        "Mb_Rd (kNm)": round(Mbrd, 2),
+                        "Vpl_Rd": round(Vpl_Rd, 2),
+                        "Utilization (%)": round((M / Mbrd) * 100, 2),
+                    }
+
             raise ValueError("No suitable section found in UB table.")
 
         # ---- Section properties ----
@@ -1172,206 +1462,38 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         Lcry = eff_L(L, endcondition[1])
     E = 210000
     G = 81000
-    i = 1
+    A0 = Ned / fy
     if shape == "UB":
         ex = openpyxl.load_workbook("UB-2.xlsx").active
+        ext_list = _UB_FULL_EXTENDED
     elif shape == "UC":
         ex = openpyxl.load_workbook("UC-2.xlsx").active
+        ext_list = _UC_FULL_EXTENDED
     else:
         raise ValueError("Unknown shape")
-    A0 = Ned / fy
-    A = 0.0
-    while True:
-        while not A > A0:
-            i += 1
-            A = float(ex.cell(row=i, column=14).value)
-        pop = beam_column_table(shape, i)
-        pop.seclass = section_class(fy, pop, Ned)
-        if pop.seclass == 1 or pop.seclass == 2:
-            Nrd = (pop.A * fy)
-            Mrd = pop.Wpl * fy
-        elif pop.seclass == 3:
-            Nrd = (pop.A * fy)
-            Mrd = pop.Wel * fy
-        elif pop.seclass == 4:
-            i += 1
+
+    # --- Phase 1: iterate through xlsx sections ---
+    for i in range(2, ex.max_row + 1):
+        cell_val = ex.cell(row=i, column=14).value
+        if cell_val is None:
+            break
+        if not float(cell_val) > A0:
             continue
-        Ncry = ((np.pi ** 2) * E * pop.Iy) / (Lcry ** 2)
-        Ncrz = ((np.pi ** 2) * E * pop.Iz) / (Lcrz ** 2)
-        lamy = np.sqrt((pop.A * fy) / Ncry)
-        lamz = np.sqrt((pop.A * fy) / Ncrz)
-        phiy = 0.5 * (1 + pop.alphay * (lamy - 0.2) + (lamy ** 2))
-        phiz = 0.5 * (1 + pop.alphaz * (lamz - 0.2) + (lamz ** 2))
-        chiy = min(1 / (phiy + np.sqrt(phiy ** 2 - lamy ** 2)), 1.0)
-        chiz = min(1 / (phiz + np.sqrt(phiz ** 2 - lamz ** 2)), 1.0)
-        term2 = (pop.A * fy)
-        chi = min(chiy, chiz)
-        Nbrd = chi * term2
-        # -------------------------
-        # LATERAL TORSIONAL BUCKLING
-        # -------------------------
-        LcrLT = Lcry  # assumption (you can refine later)
+        pop    = beam_column_table(shape, i)
+        result = _bc_ec3_check(pop, fy, Ned, Mzed, Myed, Lcry, Lcrz, E, G, C1)
+        if result is not None:
+            return result
 
-        Mcr = C1 * ((np.pi ** 2 * E * pop.Iz) / (LcrLT ** 2)) * np.sqrt(
-            (pop.Iw / pop.Iz) +
-            ((LcrLT ** 2 * G * pop.It) / (np.pi ** 2 * E * pop.Iz))
-        )
+    # --- Phase 2: extended section fallback ---
+    for row in ext_list:
+        if not float(row[1]) > A0:
+            continue
+        pop    = _bc_section_from_row(row)
+        result = _bc_ec3_check(pop, fy, Ned, Mzed, Myed, Lcry, Lcrz, E, G, C1)
+        if result is not None:
+            return result
 
-        # Select correct major-axis section modulus (EC3 Cl. 6.3.2.1)
-        if pop.seclass in [1, 2]:
-            Wy = pop.Wpl
-        else:
-            Wy = pop.Wel
-
-        lamLT = np.sqrt((Wy * fy) / Mcr)
-
-        # LTB imperfection factor per EC3 Table 6.3 (buckling curve b → α_LT = 0.34)
-        alpha_LT = 0.34
-
-        phi_LT = 0.5 * (1 + alpha_LT * (lamLT - 0.2) + lamLT ** 2)
-        chi_LT = min(1 / (phi_LT + np.sqrt(phi_LT ** 2 - lamLT ** 2)), 1.0)
-
-        Mbrd = chi_LT * Wy * fy
-
-        # -------------------------
-        # MINOR AXIS BENDING RESISTANCE (EC3 Cl. 6.2.5)
-        # Use the correct minor-axis section modulus W_pl,z / W_el,z
-        # -------------------------
-        if pop.seclass in [1, 2]:
-            Wz = pop.Wpl_z  # minor-axis plastic modulus
-        else:
-            Wz = pop.Wel_z  # minor-axis elastic modulus
-
-        Mzrd = Wz * fy
-
-        # ===================== MODIFIED INTERACTION FACTORS =====================
-        # Calculate interaction factors according to Eurocode 3 Annex B
-
-        # 1. Calculate C_m factors (moment distribution factors)
-        # Assuming uniform moment distribution (most conservative)
-        # For more accurate values, you'd need moment diagram information
-        psi_y = 1.0  # Ratio of end moments (1.0 = uniform moment)
-        psi_z = 1.0
-
-        C_my = max(0.4, 0.6 + 0.4 * psi_y)
-        C_mz = max(0.4, 0.6 + 0.4 * psi_z)
-        C_mz = C1
-        C_mLT = max(0.4, 0.6 + 0.4 * psi_z)
-        C_mLT = C1
-
-        # 2. Calculate normalized axial force
-        # Note: Using N_Rk = Nrd (plastic resistance)
-        N_Rk = Nrd
-        gamma_M1 = 1.0  # Partial safety factor (use appropriate value from material specs)
-
-        # Calculate n_y and n_z using the appropriate reduction factors
-        n_y = Ned / (chiy * N_Rk / gamma_M1) if chiy > 0 else 0
-        n_z = Ned / (chiz * N_Rk / gamma_M1) if chiz > 0 else 0
-
-        # 3. Calculate interaction factors based on section class
-        if pop.seclass in [1, 2]:  # Class 1 or 2 sections
-            # k_yy - Formula from Table B.1
-            term1 = 1 + (lamy - 0.2) * n_y
-            term2 = 1 + 0.8 * n_y
-            k_yy = C_my * min(term1, term2)
-
-            # k_zz
-            term1_z = 1 + (2 * lamz - 0.6) * n_z
-            term2_z = 1 + 1.4 * n_z
-            k_zz = C_mz * min(term1_z, term2_z)
-
-            # k_yz for Class 1/2 sections
-            k_yz = 0.6 * k_zz
-
-            # k_zy for Class 1/2 sections
-            if lamy < 0.4:
-                k_zy = 0.6 * k_yy
-            else:
-                denominator = max(C_mLT - 0.25, 0.01)
-                k_zy = 1 - (0.1 * lamz) / denominator * n_z
-                k_zy = max(k_zy, 0.6 * k_yy)
-
-        elif pop.seclass == 3:  # Class 3 sections
-            # k_yy - same as Class 1/2 but with limits
-            term1 = 1 + (0.6*lamy) * n_y
-            term2 = 1 + 0.6 * n_y
-            k_yy = C_my * min(term1, term2)
-
-            # k_zz
-            term1_z = 1 + (0.6 * lamz) * n_z
-            term2_z = 1 + 0.6 * n_z
-            k_zz = C_mz * min(term1_z, term2_z)
-
-            # For Class 3 sections, k_yz and k_zy from Table B.1
-            if lamz < 0.4:
-                k_yz = k_zz
-            else:
-                k_yz = k_zz
-
-            if lamy < 0.4:
-                k_zy = 0.8 * k_zz
-            else:
-                if lamz < 0.4:
-                    k_zy = 0.6 + lamz
-                else:
-                    denominator = max(C_mLT - 0.25, 0.01)
-                    k_zy = 1 - (0.05 * lamz) / denominator * n_z
-                    k_zy = max(k_zy, 0.6 * k_zz)
-
-        else:  # Class 4 sections - use conservative approach
-            k_yy = 1 + 0.6 * n_y
-            k_zz = 1 + 0.6 * n_z
-            k_yz = 0.6 * k_zz
-            k_zy = 0.6 * k_yy
-
-        # Ensure factors are within reasonable bounds
-        k_yy = max(0.1, min(k_yy, 2.0))
-        k_zz = max(0.1, min(k_zz, 2.0))
-        k_yz = max(0.1, min(k_yz, 2.0))
-        k_zy = max(0.1, min(k_zy, 2.0))
-
-        # 4. Apply interaction checks (EC3 Eq. 6.61 and 6.62)
-        # Eq. 6.61 — major-axis bending with LTB
-        util_y = (Ned / Nbrd) + k_yy * (Myed / Mbrd) + k_yz * (Mzed / Mzrd)
-
-        # Eq. 6.62 — minor-axis bending
-        util_z = (Ned / Nbrd) + k_zy * (Myed / Mbrd) + k_zz * (Mzed / Mzrd)
-
-        # Governing utilisation from EC3 Eq. 6.61 and 6.62 only
-        U = max(util_y, util_z)
-        # ===================== END MODIFIED SECTION =====================
-
-        # -------------------------
-        # CHECK
-        # -------------------------
-        if U <= 1.0:
-            return {
-                "Designation": pop.designation,
-                "class": pop.seclass,
-                "N_b_Rd": Nbrd,
-                "M_b_Rd": Mbrd,
-                "M_z_Rd": Mzrd,
-                "utilisation": U,
-                "chi_y": chiy,
-                "chi_z": chiz,
-                "chi_LT": chi_LT,
-                # Add interaction factors to output for verification
-                "k_yy": k_yy,
-                "k_zz": k_zz,
-                "k_yz": k_yz,
-                "k_zy": k_zy,
-                "C_my": C_my,
-                "C_mz": C_mz,
-                "util_y": util_y,
-                "util_z": util_z
-            }
-
-        # Otherwise try next section
-        i += 1
-
-        # Safety break
-        if i > ex.max_row:
-            raise ValueError("No suitable section found.")
+    raise ValueError("No suitable section found.")
 
 
 
