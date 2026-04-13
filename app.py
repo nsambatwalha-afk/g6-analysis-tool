@@ -52,7 +52,8 @@ def _show_section_figure(fig, header="📐 Section Visualization"):
         plt.close(fig)
 
 
-def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df):
+def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df,
+                        member_point_loads_df=None):
     """
     Return a matplotlib Figure showing the 2-D frame geometry with:
     - Members coloured by type (Beam / Column) with mid-span length labels
@@ -61,6 +62,7 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
       Roller (H) = triangle + horizontal wheel, Roller (V) = triangle + vertical wheel)
     - Nodal force / moment arrows
     - UDL arrow-combs along members
+    - Member point load arrows at the specified position along each member
     """
     import matplotlib.patches as mpatches
     import matplotlib.patheffects as pe
@@ -305,6 +307,50 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
             ax.text(mx2 + offset[0], my2 + offset[1],
                     "\n".join(parts) + " kN/m",
                     fontsize=7, color="#065F46", ha="center", zorder=9,
+                    path_effects=[pe.withStroke(linewidth=2, foreground="white")])
+
+    # ── Draw member point loads ───────────────────────────────────────────
+    if member_point_loads_df is not None:
+        for _, row in member_point_loads_df.dropna(subset=["Member"]).iterrows():
+            mid  = int(row["Member"])
+            dist = float(row.get("Dist from Start (m)", 0) or 0)
+            fx   = float(row.get("Fx (kN)", 0) or 0)
+            fy   = float(row.get("Fy (kN)", 0) or 0)
+
+            if mid not in member_coords:
+                continue
+            load_vec = np.array([fx, fy])
+            if np.linalg.norm(load_vec) < 1e-9:
+                continue
+
+            x1, y1, x2, y2 = member_coords[mid]
+            along = np.array([x2 - x1, y2 - y1])
+            L_mem = np.linalg.norm(along)
+            if L_mem < 1e-9:
+                continue
+            # Point on member at distance dist from start
+            t   = min(max(dist / L_mem, 0.0), 1.0)
+            px  = x1 + t * (x2 - x1)
+            py  = y1 + t * (y2 - y1)
+
+            load_dir = load_vec / np.linalg.norm(load_vec)
+            arr_len  = arrow_len
+            ax.arrow(px - load_dir[0] * arr_len, py - load_dir[1] * arr_len,
+                     load_dir[0] * arr_len, load_dir[1] * arr_len,
+                     fc="#F59E0B", ec="#92400E",
+                     width=scale * 0.07, head_width=scale * 0.25,
+                     head_length=scale * 0.18, length_includes_head=True, zorder=8)
+
+            parts = []
+            if abs(fx) > 1e-9:
+                parts.append(f"Fx={fx:+.1f}")
+            if abs(fy) > 1e-9:
+                parts.append(f"Fy={fy:+.1f}")
+            offset_dir = np.array([-load_dir[1], load_dir[0]])  # perpendicular
+            lx = px - load_dir[0] * arr_len * 0.5 + offset_dir[0] * scale * 0.5
+            ly = py - load_dir[1] * arr_len * 0.5 + offset_dir[1] * scale * 0.5
+            ax.text(lx, ly, "\n".join(parts) + " kN",
+                    fontsize=7, color="#92400E", ha="center", zorder=9,
                     path_effects=[pe.withStroke(linewidth=2, foreground="white")])
 
     # ── Legend & labels ──────────────────────────────────────────────────
@@ -1836,6 +1882,32 @@ elif task == "Frame Analysis & Design":
             key="frame_udl"
         )
 
+    st.markdown("**Member Point Loads (mid-span or off-node)**")
+    st.caption(
+        "Concentrated force applied anywhere along a member — no need to create an extra node. "
+        "**Dist from Start** is the distance (m) from the member's start node along the member. "
+        "Fx / Fy are global force components (+ve rightward / upward). "
+        "Multiple rows with the same Member ID are accumulated automatically."
+    )
+    _default_member_point_loads = pd.DataFrame({
+        "Member":             pd.array([], dtype="Int64"),
+        "Dist from Start (m)": pd.array([], dtype="float64"),
+        "Fx (kN)":            pd.array([], dtype="float64"),
+        "Fy (kN)":            pd.array([], dtype="float64"),
+    })
+    member_point_loads_df = st.data_editor(
+        _default_member_point_loads,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Member":              st.column_config.NumberColumn("Member ID", min_value=1, step=1, format="%d"),
+            "Dist from Start (m)": st.column_config.NumberColumn("Dist from Start  (m)", min_value=0.0, format="%.3f"),
+            "Fx (kN)":             st.column_config.NumberColumn("Fx  (kN)", format="%.2f"),
+            "Fy (kN)":             st.column_config.NumberColumn("Fy  (kN)", format="%.2f"),
+        },
+        key="frame_member_point_loads"
+    )
+
     st.write("---")
 
     # ── Optional frame geometry preview ───────────────────────────────────
@@ -1844,7 +1916,8 @@ elif task == "Frame Analysis & Design":
         show_vis = st.button("👁 Visualize Frame", help="Preview the frame geometry, supports and loads before running the analysis.")
     if show_vis:
         with st.spinner("Rendering frame…"):
-            vis_fig = plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df)
+            vis_fig = plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df,
+                                          member_point_loads_df)
         if vis_fig is not None:
             st.subheader("🖼 Frame Geometry Preview")
             st.pyplot(vis_fig, use_container_width=True)
@@ -1864,6 +1937,7 @@ elif task == "Frame Analysis & Design":
             supports_list = supports_df.dropna(subset=["Node"]).values.tolist()
             node_loads_list = node_loads_df.dropna(subset=["Node"]).values.tolist()
             udl_list        = udl_df.dropna(subset=["Member"]).values.tolist()
+            mpl_list        = member_point_loads_df.dropna(subset=["Member"]).values.tolist()
 
             if len(nodes_list) < 2:
                 st.error("Please define at least 2 nodes.")
@@ -1882,6 +1956,7 @@ elif task == "Frame Analysis & Design":
                 supports=supports_list,
                 node_loads=node_loads_list,
                 udl_loads=udl_list,
+                member_point_loads=mpl_list if mpl_list else None,
                 E=_fa_E,
                 I_beam=_fa_I_beam,
                 A_beam=_fa_A_beam,
@@ -1985,6 +2060,7 @@ elif task == "Frame Analysis & Design":
                 "supports_list":  supports_list,
                 "node_loads_list": node_loads_list,
                 "udl_list":       udl_list,
+                "mpl_list":       mpl_list,
                 "grade":          truss_analysis.grade,
                 "beam_condition": beam_condition,
                 "col_condition":  truss_analysis.condition,
@@ -2008,6 +2084,7 @@ elif task == "Frame Analysis & Design":
         supports_list  = fr["supports_list"]
         node_loads_list = fr["node_loads_list"]
         udl_list       = fr["udl_list"]
+        mpl_list       = fr.get("mpl_list", [])
         _grade         = fr["grade"]
         _beam_cond     = fr["beam_condition"]
         _col_cond      = fr["col_condition"]
@@ -2201,6 +2278,7 @@ elif task == "Frame Analysis & Design":
                 supports=supports_list,
                 node_loads=node_loads_list,
                 udl_loads=udl_list,
+                member_point_loads=mpl_list if mpl_list else None,
             )
             st.download_button(
                 label="📥 Download Results Sheet",
