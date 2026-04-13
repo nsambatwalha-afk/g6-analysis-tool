@@ -126,6 +126,104 @@ def set_steel_properties(
         raise ValueError("Jointing must be 'bolt' or 'weld'")
 
 
+# ---------------------------------------------------------------------------
+# Extended section databases – used when the required area exceeds the
+# largest entry in the corresponding Excel file.
+#
+# CHS  – (area mm², diameter mm, thickness mm, radius of gyration mm)
+#         sorted ascending by area; current xlsx max ≈ 24 700 mm²
+# ---------------------------------------------------------------------------
+_CHS_EXTENDED = [
+    (29858, 610,  16, 210.1),   # CHS 610x16
+    (33866, 559,  20, 190.7),   # CHS 559x20
+    (37071, 610,  20, 208.7),   # CHS 610x20
+    (40212, 660,  20, 226.4),   # CHS 660x20
+    (43417, 711,  20, 244.4),   # CHS 711x20
+    (46621, 762,  20, 262.4),   # CHS 762x20
+    (49826, 813,  20, 280.5),   # CHS 813x20
+    (56172, 914,  20, 316.2),   # CHS 914x20
+    (69822, 914,  25, 314.4),   # CHS 914x25
+    (77833, 1016, 25, 350.5),   # CHS 1016x25
+]
+
+# Angle – (area mm², size string, thickness mm)
+#          sorted ascending by area; current xlsx max ≈ 9 060 mm²
+_ANGLE_EXTENDED = [
+    (9760,  "200x200", 26),  # EA 200x200x26
+    (10460, "200x200", 28),  # EA 200x200x28
+    (11900, "250x250", 25),  # EA 250x250x25
+    (13260, "250x250", 28),  # EA 250x250x28
+    (14990, "250x250", 32),  # EA 250x250x32
+    (16330, "250x250", 35),  # EA 250x250x35
+    (17100, "300x300", 30),  # EA 300x300x30
+    (19800, "300x300", 35),  # EA 300x300x35
+]
+
+# UC – (area mm², designation, I_min mm⁴, r_min mm, axis)
+#       sorted ascending by area; current xlsx max ≈ 80 800 mm²
+#       I_min and r_min correspond to the weaker (z-z) axis for all UC sections.
+_UC_EXTENDED = [
+    (94800,  "356x406x744 UC",  1_180_000_000, 111.0, "z"),
+    (114600, "356x406x900 UC",  1_470_000_000, 113.0, "z"),
+    (138300, "356x406x1086 UC", 1_820_000_000, 115.0, "z"),
+]
+
+# UB – (area mm², designation, I_min mm⁴, r_min mm, axis)
+#       sorted ascending by area; current xlsx max ≈ 20 600 mm²
+#       I_min and r_min correspond to the weaker (z-z) axis for all UB sections.
+_UB_EXTENDED = [
+    (22000, "762x267x173 UB",  68_500_000,  55.8, "z"),   # 762x267x173
+    (22800, "610x305x179 UB",  93_100_000,  63.9, "z"),   # 610x305x179
+    (25100, "762x267x197 UB",  81_700_000,  57.0, "z"),   # 762x267x197
+    (28000, "762x267x220 UB",  89_800_000,  56.6, "z"),   # 762x267x220
+    (28500, "914x305x224 UB",  112_000_000, 62.7, "z"),   # 914x305x224
+    (32000, "762x267x251 UB",  104_000_000, 57.2, "z"),   # 762x267x251
+    (34600, "1016x305x272 UB", 145_000_000, 64.7, "z"),   # 1016x305x272
+    (36800, "914x305x289 UB",  156_000_000, 65.2, "z"),   # 914x305x289
+    (44500, "1016x305x349 UB", 185_000_000, 64.5, "z"),   # 1016x305x349
+    (48500, "914x305x381 UB",  232_000_000, 69.2, "z"),   # 914x305x381
+    (62000, "1016x305x487 UB", 317_000_000, 71.6, "z"),   # 1016x305x487
+]
+
+
+def _chs_extended(val):
+    """Return the smallest extended CHS section with area >= val, or None."""
+    for area, dia, t, rg in _CHS_EXTENDED:
+        if area >= val:
+            return area, dia, t, rg
+    return None
+
+
+def _angle_extended(val):
+    """Return the smallest extended Angle section with area > val, or None.
+
+    Uses strict inequality (>) to mirror the Angle loop's exit condition
+    ``while n <= val`` (i.e. the xlsx loop stops at the first n that is
+    *strictly greater* than val).  The other shape helpers use ``>=``
+    because their loops use ``while n < val``.
+    """
+    for area, size, t in _ANGLE_EXTENDED:
+        if area > val:
+            return area, size, t
+    return None
+
+
+def _uc_extended(val):
+    """Return the smallest extended UC section with area >= val, or None."""
+    for area, size, I, R, axis in _UC_EXTENDED:
+        if area >= val:
+            return area, size, I, R, axis
+    return None
+
+
+def _ub_extended(val):
+    """Return the smallest extended UB section with area >= val, or None."""
+    for area, size, I, R, axis in _UB_EXTENDED:
+        if area >= val:
+            return area, size, I, R, axis
+    return None
+
+
 def table_reader(table, val):
     if table == "CHS":
         ex = openpyxl.load_workbook("CHS.xlsx")
@@ -134,6 +232,8 @@ def table_reader(table, val):
         i = 1
         while n<val:
             i = i + 1
+            if i > ex.max_row:
+                return _chs_extended(val)
             n = float(ex.cell(row=i, column=4).value)
         dia = float(ex.cell(row=i, column=1).value)
         thickness = float(ex.cell(row=i, column=2).value)
@@ -147,6 +247,8 @@ def table_reader(table, val):
         i = 44
         while n<=val:
             i = i - 1
+            if i < 2:
+                return _angle_extended(val)
             n = float(ex.cell(row=i, column=6).value)
         size = ex.cell(row=i, column=1).value
         thickness = float(ex.cell(row=i, column=2).value)
@@ -158,6 +260,8 @@ def table_reader(table, val):
         i = 1
         while n<val:
             i = i + 1
+            if i > ex.max_row:
+                return _uc_extended(val)
             n = float(ex.cell(row=i, column=14).value)
         area = n
         size = ex.cell(row=i, column=1).value
@@ -180,6 +284,8 @@ def table_reader(table, val):
         i = 1
         while n < val:
             i = i + 1
+            if i > ex.max_row:
+                return _ub_extended(val)
             n = float(ex.cell(row=i, column=14).value)
         area = n
         size = ex.cell(row=i, column=1).value
