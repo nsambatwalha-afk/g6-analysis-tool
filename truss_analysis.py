@@ -241,7 +241,7 @@ def _ub_extended(val):
 #   Iy = A × ry²   (ry per series: 762×267→27.7 cm, 610×305→24.6 cm,
 #                   914×305→37.8 cm, 1016×305→40.0 cm)
 #   Wel = 2Iy/h ;  Wpl ≈ 1.12 × Wel  (shape factor ≈ 1.12)
-#   Iw  ≈ Iz × h² / 4  (in cm⁶ → dm⁶)
+#   Iw  ≈ Iz × h² / 4  (cm⁴ × cm² = cm⁶, converted to dm⁶ for storage)
 #   It  ≈ (2b tf³ + (h−2tf) tw³) / 3  (Saint-Venant torsion, mm⁴ → cm⁴)
 # ---------------------------------------------------------------------------
 _UB_FULL_EXTENDED = [
@@ -1047,7 +1047,7 @@ def unrestrained_beam(M, V, L):
             for ext_row in _UB_FULL_EXTENDED:
                 ext_size = ext_row[0]
                 Wpl  = ext_row[8]  * 1000.0    # Wpl,y  mm³
-                iz   = ext_row[5]  * 10.0       # rz → iz  mm
+                iz   = ext_row[5]  * 10.0       # rz (cm) → iz (mm)
                 tw   = float(ext_row[12])
                 h    = float(ext_row[13])
                 tf   = float(ext_row[14])
@@ -1067,7 +1067,7 @@ def unrestrained_beam(M, V, L):
                 lamz    = (k * L) / iz
                 laml    = np.pi * np.sqrt(E / fy)
                 lamzba  = lamz / laml
-                lamltb  = 0.9 * lamzba  # c1=1, u=0.9, v=1, bew=1
+                lamltb  = 0.9 * lamzba  # EC3 §6.3.2.2: C1=1.0, u=0.9, v=1.0, βw=1.0
                 hoverb  = h / b
 
                 if condition == "Rolled":
@@ -1493,7 +1493,7 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
         if result is not None:
             return result
 
-    return None  # No suitable section found
+    raise ValueError("No suitable section found.")
 
 
 
