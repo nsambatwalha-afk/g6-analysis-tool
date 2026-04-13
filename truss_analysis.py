@@ -296,7 +296,7 @@ def _bc_section_from_row(row):
                 alphay = alphaz = 0.13
             elif tf > 100:
                 alphay = alphaz = 0.49
-            else:
+            else:  # 40 < tf <= 100
                 alphay = alphaz = 0.21
     else:
         alphay, alphaz = (0.34, 0.49) if tf <= 40 else (0.49, 0.76)
@@ -338,7 +338,7 @@ def _bc_ec3_check(pop, fy, Ned, Mzed, Myed, Lcry, Lcrz, E, G, C1):
         (pop.Iw / pop.Iz) + (LcrLT ** 2 * G * pop.It) / (np.pi ** 2 * E * pop.Iz)
     )
 
-    Wy     = pop.Wpl if seclass in (1, 2) else pop.Wel
+    Wy = pop.Wpl if seclass in (1, 2) else pop.Wel
     lamLT  = np.sqrt((Wy * fy) / Mcr)
     phi_LT = 0.5 * (1 + 0.34 * (lamLT - 0.2) + lamLT ** 2)
     chi_LT = min(1 / (phi_LT + np.sqrt(phi_LT ** 2 - lamLT ** 2)), 1.0)
@@ -1464,10 +1464,10 @@ def beam_column(L, Ned, Mzed, Myed, shape, C1, all_axis_similar=True):
     G = 81000
     A0 = Ned / fy
     if shape == "UB":
-        ex      = openpyxl.load_workbook("UB-2.xlsx").active
+        ex = openpyxl.load_workbook("UB-2.xlsx").active
         ext_list = _UB_FULL_EXTENDED
     elif shape == "UC":
-        ex      = openpyxl.load_workbook("UC-2.xlsx").active
+        ex = openpyxl.load_workbook("UC-2.xlsx").active
         ext_list = _UC_FULL_EXTENDED
     else:
         raise ValueError("Unknown shape")
