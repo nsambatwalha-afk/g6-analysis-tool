@@ -1237,6 +1237,7 @@ def frame_design_report(
     supports=None,
     node_loads=None,
     udl_loads=None,
+    member_point_loads=None,
 ) -> io.BytesIO:
     """
     Generate a formatted Excel results sheet for the Frame Analysis & Design task.
@@ -1315,6 +1316,17 @@ def frame_design_report(
                 row = _step(ws, row, str(int(ul[0])),
                             _fmt(float(ul[1]), 3),
                             _fmt(float(ul[2]), 3), "")
+        row = _blank(ws, row)
+
+    if member_point_loads:
+        row = _section(ws, row, "APPLIED LOADS — Member Point Loads")
+        row = _step(ws, row, "Member", "Dist from start (m)", "Fx (kN)", "Fy (kN)")
+        for pl in member_point_loads:
+            if any(abs(float(v)) > 1e-12 for v in pl[2:]):
+                row = _step(ws, row, str(int(pl[0])),
+                            _fmt(float(pl[1]), 3),
+                            _fmt(float(pl[2]), 3),
+                            _fmt(float(pl[3]), 3))
         row = _blank(ws, row)
 
     # ── ANALYSIS METHOD ────────────────────────────────────────────────────

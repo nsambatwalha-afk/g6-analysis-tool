@@ -63,7 +63,7 @@ def _transform(angle):
 
 def _fef_local(p_x, p_y, L):
     """
-    Fixed-end forces in local coordinates for a uniform distributed load.
+    Consistent nodal loads in local coordinates for a uniform distributed load.
     p_x : load per unit length along member (+ve in local x-direction)  [kN/m]
     p_y : load per unit length perp. to member (+ve in local y-direction) [kN/m]
     Returns 6-element vector [F1x, F1y, M1, F2x, F2y, M2].
@@ -78,11 +78,39 @@ def _fef_local(p_x, p_y, L):
     ])
 
 
+def _fef_point_local(P_x, P_y, a, L):
+    """
+    Consistent nodal loads in local coordinates for a concentrated point load.
+
+    P_x : axial component of load  (+ve in local x-direction)  [kN]
+    P_y : transverse component     (+ve in local y-direction)  [kN]
+    a   : distance from start node to the load along the member [m]
+    L   : total member length [m]
+
+    Returns 6-element vector [F1x, F1y, M1, F2x, F2y, M2] using the
+    Hermite shape-function integrals (same sign convention as _fef_local).
+    """
+    if not (0.0 <= a <= L):
+        raise ValueError(
+            f"Point load distance a={a:.4f} m must be within member length L={L:.4f} m."
+        )
+    b = L - a
+    return np.array([
+        P_x * b / L,
+        P_y * b ** 2 * (L + 2 * a) / L ** 3,
+        P_y * a * b ** 2 / L ** 2,
+        P_x * a / L,
+        P_y * a ** 2 * (L + 2 * b) / L ** 3,
+       -P_y * a ** 2 * b / L ** 2,
+    ])
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
 def analyse_frame(nodes, members, supports, node_loads, udl_loads,
+                  member_point_loads=None,
                   E=_E, I_beam=_I_BEAM, A_beam=_A_BEAM,
                   I_col=_I_COL, A_col=_A_COL):
     """
@@ -100,6 +128,13 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
     udl_loads  : list of [member_id (int), wx (kN/m), wy (kN/m)]
         wx: horizontal component of distributed load (+ve = rightward).
         wy: vertical component of distributed load   (+ve = upward).
+    member_point_loads : list of [member_id (int), dist (float, m),
+                                  Fx (kN), Fy (kN)]  or None
+        Concentrated point loads applied at an intermediate position along a
+        member (not necessarily at a node).
+        dist : distance from the member's start node along the member axis [m].
+        Fx, Fy : global force components (+ve rightward / upward).
+        Multiple loads on the same member are automatically accumulated.
     E      : Young's modulus (kN/m²). Default 210 GPa.
     I_beam : Second moment of area for beam members (m⁴).
     A_beam : Cross-sectional area for beam members (m²).
@@ -131,9 +166,18 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
     K = np.zeros((n_dof, n_dof))
     F = np.zeros(n_dof)
 
-    # pre-process UDL and support lookups
+    # pre-process UDL, member point loads, and support lookups
     udl_map     = {int(u[0]): (float(u[1]), float(u[2])) for u in udl_loads}
     support_map = {int(s[0]): s[1] for s in supports}
+
+    # Group member point loads by member ID: {mid: [(dist, Fx_g, Fy_g), ...]}
+    mpl_map: dict[int, list] = {}
+    if member_point_loads:
+        for pl in member_point_loads:
+            mid_pl = int(pl[0])
+            mpl_map.setdefault(mid_pl, []).append(
+                (float(pl[1]), float(pl[2]), float(pl[3]))
+            )
 
     member_meta = {}   # member_id → geometry + stiffness data
 
@@ -165,18 +209,32 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
             for b in range(6):
                 K[dofs[a], dofs[b]] += K_glob[a, b]
 
-        # Fixed-end forces from UDL (if any)
+        # Consistent nodal loads from UDL (if any)
         fef_loc = np.zeros(6)
+        c, s = np.cos(angle), np.sin(angle)
         if mid in udl_map:
             wx_g, wy_g = udl_map[mid]
-            c, s = np.cos(angle), np.sin(angle)
             # Decompose global UDL into local coords
             p_x =  wx_g * c + wy_g * s
             p_y = -wx_g * s + wy_g * c
-            fef_loc = _fef_local(p_x, p_y, L)
-            fef_glob = T.T @ fef_loc
-            for a in range(6):
-                F[dofs[a]] += fef_glob[a]
+            fef_loc += _fef_local(p_x, p_y, L)
+
+        # Consistent nodal loads from member point loads (if any)
+        if mid in mpl_map:
+            for dist, Fx_g, Fy_g in mpl_map[mid]:
+                if not (0.0 <= dist <= L):
+                    raise ValueError(
+                        f"Member point load on member {mid}: distance {dist:.4f} m "
+                        f"is outside member length {L:.4f} m."
+                    )
+                # Transform global load to local member coordinates
+                P_x_loc =  Fx_g * c + Fy_g * s
+                P_y_loc = -Fx_g * s + Fy_g * c
+                fef_loc += _fef_point_local(P_x_loc, P_y_loc, dist, L)
+
+        fef_glob = T.T @ fef_loc
+        for a in range(6):
+            F[dofs[a]] += fef_glob[a]
 
         member_meta[mid] = {
             "length": L,
