@@ -211,9 +211,9 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
 
         # Consistent nodal loads from UDL (if any)
         fef_loc = np.zeros(6)
+        c, s = np.cos(angle), np.sin(angle)
         if mid in udl_map:
             wx_g, wy_g = udl_map[mid]
-            c, s = np.cos(angle), np.sin(angle)
             # Decompose global UDL into local coords
             p_x =  wx_g * c + wy_g * s
             p_y = -wx_g * s + wy_g * c
@@ -221,7 +221,6 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
 
         # Consistent nodal loads from member point loads (if any)
         if mid in mpl_map:
-            c, s = np.cos(angle), np.sin(angle)
             for dist, Fx_g, Fy_g in mpl_map[mid]:
                 if not (0.0 <= dist <= L):
                     raise ValueError(

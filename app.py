@@ -1901,9 +1901,9 @@ elif task == "Frame Analysis & Design":
         use_container_width=True,
         column_config={
             "Member":              st.column_config.NumberColumn("Member ID", min_value=1, step=1, format="%d"),
-            "Dist from Start (m)": st.column_config.NumberColumn("Dist from Start  (m)", min_value=0.0, format="%.3f"),
-            "Fx (kN)":             st.column_config.NumberColumn("Fx  (kN)", format="%.2f"),
-            "Fy (kN)":             st.column_config.NumberColumn("Fy  (kN)", format="%.2f"),
+            "Dist from Start (m)": st.column_config.NumberColumn("Dist from Start (m)", min_value=0.0, format="%.3f"),
+            "Fx (kN)":             st.column_config.NumberColumn("Fx (kN)", format="%.2f"),
+            "Fy (kN)":             st.column_config.NumberColumn("Fy (kN)", format="%.2f"),
         },
         key="frame_member_point_loads"
     )
