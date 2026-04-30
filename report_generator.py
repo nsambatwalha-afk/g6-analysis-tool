@@ -1490,10 +1490,10 @@ def frame_design_report(
                     "wy_start / wy_end  (kN/m)", "")
         for tl in trapezoidal_loads:
             if any(abs(float(v)) > 1e-12 for v in tl[1:]):
-                load_type = "Triangular" if (
-                    abs(float(tl[1])) < 1e-9 or abs(float(tl[3])) < 1e-9 or
-                    abs(float(tl[2])) < 1e-9 or abs(float(tl[4])) < 1e-9
-                ) else "Trapezoidal"
+                # Triangular = one full end (both components) is zero
+                start_zero = (abs(float(tl[1])) < 1e-9 and abs(float(tl[2])) < 1e-9)
+                end_zero   = (abs(float(tl[3])) < 1e-9 and abs(float(tl[4])) < 1e-9)
+                load_type = "Triangular" if (start_zero or end_zero) else "Trapezoidal"
                 wx_str = f"{_fmt(float(tl[1]), 3)} → {_fmt(float(tl[3]), 3)}"
                 wy_str = f"{_fmt(float(tl[2]), 3)} → {_fmt(float(tl[4]), 3)}"
                 row = _step(ws, row, str(int(tl[0])), wx_str, wy_str, load_type)
