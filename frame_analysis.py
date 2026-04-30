@@ -78,6 +78,29 @@ def _fef_local(p_x, p_y, L):
     ])
 
 
+def _fef_trapezoidal_local(p_x1, p_x2, p_y1, p_y2, L):
+    """
+    Consistent nodal loads in local coordinates for a linearly varying
+    (trapezoidal / triangular) distributed load.
+
+    p_x1, p_x2 : axial intensities at start/end node (+ve in local x)  [kN/m]
+    p_y1, p_y2 : transverse intensities at start/end node (+ve in local y) [kN/m]
+
+    Derivation uses Hermite shape functions.  The formulas reduce exactly to
+    _fef_local when p_x1==p_x2 and p_y1==p_y2 (pure UDL).
+
+    Returns 6-element vector [F1x, F1y, M1, F2x, F2y, M2].
+    """
+    return np.array([
+        (2 * p_x1 + p_x2) * L / 6,
+        (7 * p_y1 + 3 * p_y2) * L / 20,
+        (3 * p_y1 + 2 * p_y2) * L ** 2 / 60,
+        (p_x1 + 2 * p_x2) * L / 6,
+        (3 * p_y1 + 7 * p_y2) * L / 20,
+        -(2 * p_y1 + 3 * p_y2) * L ** 2 / 60,
+    ])
+
+
 def _fef_point_local(P_x, P_y, a, L):
     """
     Consistent nodal loads in local coordinates for a concentrated point load.
@@ -111,6 +134,7 @@ def _fef_point_local(P_x, P_y, a, L):
 
 def analyse_frame(nodes, members, supports, node_loads, udl_loads,
                   member_point_loads=None,
+                  trapezoidal_loads=None,
                   E=_E, I_beam=_I_BEAM, A_beam=_A_BEAM,
                   I_col=_I_COL, A_col=_A_COL):
     """
@@ -135,6 +159,13 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
         dist : distance from the member's start node along the member axis [m].
         Fx, Fy : global force components (+ve rightward / upward).
         Multiple loads on the same member are automatically accumulated.
+    trapezoidal_loads : list of [member_id (int), wx_start (kN/m), wy_start (kN/m),
+                                  wx_end (kN/m), wy_end (kN/m)]  or None
+        Linearly varying distributed loads (trapezoidal or triangular).
+        wx_start / wy_start : global load intensities at the member's start node.
+        wx_end   / wy_end   : global load intensities at the member's end node.
+        A triangular load is a special case where one end intensity is zero.
+        Multiple rows with the same Member ID are accumulated automatically.
     E      : Young's modulus (kN/m²). Default 210 GPa.
     I_beam : Second moment of area for beam members (m⁴).
     A_beam : Cross-sectional area for beam members (m²).
@@ -177,6 +208,16 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
             mid_pl = int(pl[0])
             mpl_map.setdefault(mid_pl, []).append(
                 (float(pl[1]), float(pl[2]), float(pl[3]))
+            )
+
+    # Group trapezoidal loads by member ID:
+    # {mid: [(wx1, wy1, wx2, wy2), ...]}
+    trap_map: dict[int, list] = {}
+    if trapezoidal_loads:
+        for tl in trapezoidal_loads:
+            mid_tl = int(tl[0])
+            trap_map.setdefault(mid_tl, []).append(
+                (float(tl[1]), float(tl[2]), float(tl[3]), float(tl[4]))
             )
 
     member_meta = {}   # member_id → geometry + stiffness data
@@ -231,6 +272,16 @@ def analyse_frame(nodes, members, supports, node_loads, udl_loads,
                 P_x_loc =  Fx_g * c + Fy_g * s
                 P_y_loc = -Fx_g * s + Fy_g * c
                 fef_loc += _fef_point_local(P_x_loc, P_y_loc, dist, L)
+
+        # Consistent nodal loads from trapezoidal / triangular loads (if any)
+        if mid in trap_map:
+            for wx1_g, wy1_g, wx2_g, wy2_g in trap_map[mid]:
+                # Decompose global start/end intensities into local coords
+                p_x1 =  wx1_g * c + wy1_g * s
+                p_y1 = -wx1_g * s + wy1_g * c
+                p_x2 =  wx2_g * c + wy2_g * s
+                p_y2 = -wx2_g * s + wy2_g * c
+                fef_loc += _fef_trapezoidal_local(p_x1, p_x2, p_y1, p_y2, L)
 
         fef_glob = T.T @ fef_loc
         for a in range(6):

@@ -557,9 +557,10 @@ def compression_design_report(
 # 5. Restrained Beam Design
 # ─────────────────────────────────────────────
 
-def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.BytesIO:
+def restrained_beam_report(M: float, V: float, grade: str, result: dict,
+                           L: float = None) -> io.BytesIO:
     """
-    M in kNm, V in kN.
+    M in kNm, V in kN, L in mm (optional – used for the SLS deflection check).
     result is the dict returned by truss_analysis.restrained_beam().
     Re-reads section properties from UB-2.xlsx to show step-by-step.
     """
@@ -577,12 +578,13 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.B
             "in the working directory."
         )
     size = result["Size"]
-    Wpl = Av = Aw = tw = h = tf = None
+    Wpl = Av = Aw = tw = h = tf = Iy = None
     for i in range(2, ex.max_row + 1):
         if ex.cell(row=i, column=1).value == size:
             Wyy = float(ex.cell(row=i, column=8).value) * 1000
             Wzz = float(ex.cell(row=i, column=9).value) * 1000
             Wpl = max(Wyy, Wzz)
+            Iy  = float(ex.cell(row=i, column=2).value) * 10000  # cm⁴ → mm⁴
             tw  = float(ex.cell(row=i, column=15).value)
             h   = float(ex.cell(row=i, column=16).value)
             tf  = float(ex.cell(row=i, column=17).value)
@@ -597,10 +599,17 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.B
 
     high_shear = V > 0.5 * Vpl_Rd
 
+    # Deflection data (from result dict if available)
+    delta     = result.get("delta (mm)")
+    delta_lim = result.get("delta_lim (mm)")
+    defl_ok   = result.get("Deflection Check") == "PASS ✓"
+
     # ── INPUTS ──
     row = _section(ws, row, "DESIGN INPUTS")
     row = _step(ws, row, "·", "Design Bending Moment",   f"M_Ed = {_fmt(M, 2)} kNm")
     row = _step(ws, row, "·", "Design Shear Force",      f"V_Ed = {_fmt(V, 2)} kN")
+    if L is not None:
+        row = _step(ws, row, "·", "Beam Span",           f"L = {_fmt(L)} mm  ({_fmt(L/1000, 3)} m)")
     row = _step(ws, row, "·", "Steel Grade",             grade)
     row = _step(ws, row, "·", "Beam Type",               "Restrained (full lateral restraint)")
     row = _blank(ws, row)
@@ -633,10 +642,11 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.B
                     "Substitution",
                     f"V_pl,Rd = {_fmt(Av, 1)} × {_fmt(fy)} / (√3 × 1.0) / 1000",
                     f"{_fmt(Vpl_Rd, 2)} kN")
+    shear_ok = V <= Vpl_Rd
     row = _step(ws, row, "",
                 "Check: V_Ed ≤ V_pl,Rd",
                 f"{_fmt(V, 2)} kN ≤ {_fmt(Vpl_Rd, 2)} kN",
-                "PASS ✓" if V <= Vpl_Rd else "FAIL ✗")
+                "PASS ✓" if shear_ok else "FAIL ✗")
     row = _blank(ws, row)
 
     if not high_shear:
@@ -675,7 +685,8 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.B
                         f"{_fmt(M_Rd, 2)} kNm")
 
     row = _blank(ws, row)
-    row = _step(ws, row, "Step 3" if not high_shear else "Step 4",
+    moment_step = "Step 3" if not high_shear else "Step 4"
+    row = _step(ws, row, moment_step,
                 "Moment capacity check",
                 "M_Ed ≤ M_Rd",
                 "")
@@ -685,12 +696,67 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict) -> io.B
                 f"{_fmt(M, 2)} kNm ≤ {_fmt(M_Rd, 2)} kNm",
                 "PASS ✓" if passed else "FAIL ✗")
 
+    # ── SLS DEFLECTION CHECK ──────────────────────────────────────────────────
+    if L is not None and delta is not None:
+        row = _blank(ws, row)
+        defl_step = "Step 4" if not high_shear else "Step 5"
+        row = _section(ws, row, "SERVICEABILITY — Deflection Check (EC3)")
+        row = _step(ws, row, defl_step,
+                    "Mid-span deflection (equivalent UDL assumption)",
+                    "δ = 5 × M_Ed × L² / (48 × E × I_y)  [mm]",
+                    "")
+        if Iy is not None:
+            row = _step(ws, row, "",
+                        "Section second moment of area",
+                        f"I_y = {_fmt(Iy / 1e4, 0)} cm⁴ = {_fmt(Iy, 0)} mm⁴",
+                        "")
+        row = _step(ws, row, "",
+                    "Deflection limit (EC3)",
+                    "δ_lim = L / 300",
+                    f"δ_lim = {_fmt(L)}/300 = {_fmt(delta_lim, 2)} mm")
+        Iy_show = _fmt(Iy, 0) if Iy is not None else "I_y"
+        row = _step(ws, row, "",
+                    "Substitution",
+                    f"δ = 5 × {_fmt(M * 1e6, 1)} × {_fmt(L)}² / (48 × 210000 × {Iy_show})",
+                    f"δ = {_fmt(delta, 2)} mm")
+        row = _step(ws, row, "",
+                    "Check: δ ≤ δ_lim",
+                    f"{_fmt(delta, 2)} mm ≤ {_fmt(delta_lim, 2)} mm",
+                    "PASS ✓" if defl_ok else "FAIL ✗")
+        row = _step(ws, row, "",
+                    "Note",
+                    "Deflection computed using design (factored) forces — conservative SLS estimate.",
+                    "")
+
     row = _blank(ws, row)
     row = _result_row(ws, row,
                       f"Section: {size}  |  M_Rd = {_fmt(M_Rd, 2)} kNm  "
                       f"|  V_Rd = {_fmt(Vpl_Rd, 2)} kN  |  Utilisation = {_fmt(util, 1)} %",
                       "PASS ✓" if passed else "FAIL ✗",
                       passed)
+
+    # ── DESIGN CHECK SUMMARY ─────────────────────────────────────────────────
+    row = _blank(ws, row)
+    row = _section(ws, row, "DESIGN CHECK SUMMARY")
+    row = _step(ws, row, "Check",      "Criterion",                  "Result",           "Status")
+    shear_str = f"V_Ed = {_fmt(V,2)} kN ≤ V_pl,Rd = {_fmt(Vpl_Rd,2)} kN"
+    row = _step(ws, row, "1. Shear",   shear_str,                    "",
+                "PASS ✓" if shear_ok else "FAIL ✗")
+    moment_str = f"M_Ed = {_fmt(M,2)} kNm ≤ M_Rd = {_fmt(M_Rd,2)} kNm"
+    row = _step(ws, row, "2. Moment",  moment_str,                   "",
+                "PASS ✓" if passed else "FAIL ✗")
+    if L is not None and delta is not None:
+        defl_str = f"δ = {_fmt(delta,2)} mm ≤ δ_lim = {_fmt(delta_lim,2)} mm"
+        row = _step(ws, row, "3. Deflection (SLS)", defl_str,        "",
+                    "PASS ✓" if defl_ok else "FAIL ✗")
+        all_ok = shear_ok and passed and defl_ok
+    else:
+        all_ok = shear_ok and passed
+    row = _blank(ws, row)
+    row = _result_row(ws, row,
+                      f"Section {size} — all checks performed",
+                      "PASS ✓" if all_ok else "FAIL ✗",
+                      all_ok)
 
     return _wb_bytes(wb)
 
@@ -935,11 +1001,50 @@ def unrestrained_beam_report(
                 f"{_fmt(Mbrd, 2)} kNm")
     row = _blank(ws, row)
 
+    shear_ok  = V <= Vpl_Rd
     passed = M <= Mbrd
     row = _step(ws, row, "Final check",
                 "M_Ed ≤ M_b,Rd",
                 f"{_fmt(M, 2)} kNm ≤ {_fmt(Mbrd, 2)} kNm",
                 "PASS ✓" if passed else "FAIL ✗")
+
+    # ── SLS DEFLECTION CHECK ──────────────────────────────────────────────────
+    Iy_mm4   = sec.get("Iy", 0)
+    E_steel  = 210000.0  # N/mm²
+    delta     = result.get("delta (mm)")
+    delta_lim = result.get("delta_lim (mm)")
+    defl_ok   = result.get("Deflection Check") == "PASS ✓"
+
+    if delta is not None:
+        row = _blank(ws, row)
+        defl_step = "Step 13" if high_shear else "Step 12"
+        row = _section(ws, row, "SERVICEABILITY — Deflection Check (EC3)")
+        row = _step(ws, row, defl_step,
+                    "Mid-span deflection (equivalent UDL assumption)",
+                    "δ = 5 × M_Ed × L² / (48 × E × I_y)  [mm]",
+                    "")
+        if Iy_mm4:
+            row = _step(ws, row, "",
+                        "Section second moment of area",
+                        f"I_y = {_fmt(Iy_mm4 / 1e4, 0)} cm⁴ = {_fmt(Iy_mm4, 0)} mm⁴",
+                        "")
+        row = _step(ws, row, "",
+                    "Deflection limit (EC3)",
+                    "δ_lim = L / 300",
+                    f"δ_lim = {_fmt(L)}/300 = {_fmt(delta_lim, 2)} mm")
+        Iy_show = _fmt(Iy_mm4, 0) if Iy_mm4 else "I_y"
+        row = _step(ws, row, "",
+                    "Substitution",
+                    f"δ = 5 × {_fmt(M * 1e6, 1)} × {_fmt(L)}² / (48 × 210000 × {Iy_show})",
+                    f"δ = {_fmt(delta, 2)} mm")
+        row = _step(ws, row, "",
+                    "Check: δ ≤ δ_lim",
+                    f"{_fmt(delta, 2)} mm ≤ {_fmt(delta_lim, 2)} mm",
+                    "PASS ✓" if defl_ok else "FAIL ✗")
+        row = _step(ws, row, "",
+                    "Note",
+                    "Deflection computed using design (factored) forces — conservative SLS estimate.",
+                    "")
 
     row = _blank(ws, row)
     row = _result_row(ws, row,
@@ -947,6 +1052,29 @@ def unrestrained_beam_report(
                       f"|  χ_LT = {_fmt(chi, 3)}  |  Utilisation = {_fmt(util, 1)} %",
                       "PASS ✓" if passed else "FAIL ✗",
                       passed)
+
+    # ── DESIGN CHECK SUMMARY ─────────────────────────────────────────────────
+    row = _blank(ws, row)
+    row = _section(ws, row, "DESIGN CHECK SUMMARY")
+    row = _step(ws, row, "Check",       "Criterion",                   "Result",          "Status")
+    shear_str  = f"V_Ed = {_fmt(V,2)} kN ≤ V_pl,Rd = {_fmt(Vpl_Rd,2)} kN"
+    row = _step(ws, row, "1. Shear",    shear_str,                     "",
+                "PASS ✓" if shear_ok else "FAIL ✗")
+    ltb_str    = f"M_Ed = {_fmt(M,2)} kNm ≤ M_b,Rd = {_fmt(Mbrd,2)} kNm  (χ_LT = {_fmt(chi,3)})"
+    row = _step(ws, row, "2. LTB Bending", ltb_str,                   "",
+                "PASS ✓" if passed else "FAIL ✗")
+    if delta is not None:
+        defl_str = f"δ = {_fmt(delta,2)} mm ≤ δ_lim = {_fmt(delta_lim,2)} mm"
+        row = _step(ws, row, "3. Deflection (SLS)", defl_str,          "",
+                    "PASS ✓" if defl_ok else "FAIL ✗")
+        all_ok = shear_ok and passed and defl_ok
+    else:
+        all_ok = shear_ok and passed
+    row = _blank(ws, row)
+    row = _result_row(ws, row,
+                      f"Section {size} — all checks performed",
+                      "PASS ✓" if all_ok else "FAIL ✗",
+                      all_ok)
 
     return _wb_bytes(wb)
 
@@ -1087,6 +1215,30 @@ def beam_column_report(
     row = _blank(ws, row)
     row = _result_row(ws, row,
                       f"Section: {designation}  |  Class {sec_class}  |  Utilisation U = {_fmt(U, 3)}",
+                      "PASS ✓" if passed else "FAIL ✗",
+                      passed)
+
+    # ── DESIGN CHECK SUMMARY ─────────────────────────────────────────────────
+    row = _blank(ws, row)
+    row = _section(ws, row, "DESIGN CHECK SUMMARY")
+    row = _step(ws, row, "Check",           "Criterion",                 "Result",  "Status")
+    axial_str = f"N_Ed = {_fmt(Ned/1000,2)} kN ≤ N_b,Rd = {_fmt(Nbrd/1000,2)} kN"
+    row = _step(ws, row, "1. Flexural Buckling", axial_str,              "",
+                "PASS ✓" if (Ned <= Nbrd) else "FAIL ✗")
+    ltb_str = f"M_b,Rd = {_fmt(Mbrd/1e6,2)} kNm  (χ_LT = {_fmt(chiLT,3)})"
+    row = _step(ws, row, "2. LTB",          ltb_str,                     "", "")
+    eq61_str = f"Eq.6.61 utilisation = {_fmt(util_y,4)}"
+    row = _step(ws, row, "3. Interaction Eq.6.61", eq61_str,             "",
+                "PASS ✓" if util_y <= 1.0 else "FAIL ✗")
+    eq62_str = f"Eq.6.62 utilisation = {_fmt(util_z,4)}"
+    row = _step(ws, row, "4. Interaction Eq.6.62", eq62_str,             "",
+                "PASS ✓" if util_z <= 1.0 else "FAIL ✗")
+    row = _step(ws, row, "Note",
+                "Deflection check: not applicable (beam-column under combined N+M — no free span deflection limit).",
+                "", "")
+    row = _blank(ws, row)
+    row = _result_row(ws, row,
+                      f"Section {designation}  |  Class {sec_class}  |  Governing U = {_fmt(U,3)}",
                       "PASS ✓" if passed else "FAIL ✗",
                       passed)
 
@@ -1238,6 +1390,8 @@ def frame_design_report(
     node_loads=None,
     udl_loads=None,
     member_point_loads=None,
+    trapezoidal_loads=None,   # list of [mid, wx_start, wy_start, wx_end, wy_end]
+    beam_deflections: dict = None,  # {mid: {"delta (mm)":..., "delta_lim (mm)":..., "defl_ok":...}}
 ) -> io.BytesIO:
     """
     Generate a formatted Excel results sheet for the Frame Analysis & Design task.
@@ -1329,6 +1483,22 @@ def frame_design_report(
                             _fmt(float(pl[3]), 3))
         row = _blank(ws, row)
 
+    if trapezoidal_loads:
+        row = _section(ws, row, "APPLIED LOADS — Trapezoidal / Triangular Loads")
+        row = _step(ws, row, "Member",
+                    "wx_start / wx_end  (kN/m)",
+                    "wy_start / wy_end  (kN/m)", "")
+        for tl in trapezoidal_loads:
+            if any(abs(float(v)) > 1e-12 for v in tl[1:]):
+                # Triangular = one full end (both components) is zero
+                start_zero = (abs(float(tl[1])) < 1e-9 and abs(float(tl[2])) < 1e-9)
+                end_zero   = (abs(float(tl[3])) < 1e-9 and abs(float(tl[4])) < 1e-9)
+                load_type = "Triangular" if (start_zero or end_zero) else "Trapezoidal"
+                wx_str = f"{_fmt(float(tl[1]), 3)} → {_fmt(float(tl[3]), 3)}"
+                wy_str = f"{_fmt(float(tl[2]), 3)} → {_fmt(float(tl[4]), 3)}"
+                row = _step(ws, row, str(int(tl[0])), wx_str, wy_str, load_type)
+        row = _blank(ws, row)
+
     # ── ANALYSIS METHOD ────────────────────────────────────────────────────
     row = _section(ws, row, "STRUCTURAL ANALYSIS — Method")
     row = _step(ws, row, "Method",
@@ -1394,7 +1564,7 @@ def frame_design_report(
     if beam_mids:
         row = _section(ws, row, "DESIGN RESULTS — Beams (UB sections)")
         row = _step(ws, row, "Member", "Section", "M_Rd (kNm)  /  M_Ed (kNm)",
-                    "V_Rd (kN)  /  V_Ed (kN)  |  Utilisation  |  Status")
+                    "V_Rd (kN)  /  V_Ed (kN)  |  Utilisation  |  Deflection  |  Status")
         for mid in beam_mids:
             dr   = member_design[mid]
             ar   = member_analysis[mid]
@@ -1407,6 +1577,13 @@ def frame_design_report(
             size = dr.get("Size", "—")
             m_str = f"M_Rd={_fmt(Mrd,2)} / M_Ed={_fmt(M_Ed,2)} kNm"
             v_str = f"V_Rd={_fmt(Vrd,2)} / V_Ed={_fmt(V_Ed,2)} kN | U={_fmt(util,1)}%"
+            # Deflection check
+            bd = (beam_deflections or {}).get(mid)
+            if bd:
+                d_ok  = bd.get("defl_ok", True)
+                d_str = f"δ={_fmt(bd['delta (mm)'],2)} mm ≤ {_fmt(bd['delta_lim (mm)'],2)} mm"
+                v_str += f" | {d_str}"
+                ok = ok and d_ok
             row = _step(ws, row, f"Member {mid}", size, m_str, v_str)
             passed_str = "PASS ✓" if ok else "FAIL ✗"
             row = _result_row(ws, row,
@@ -1516,5 +1693,71 @@ def frame_design_report(
                               f"Member {mid} — {size}  |  Utilisation {_fmt(U,3)}",
                               passed_str, ok)
         row = _blank(ws, row)
+
+    # ── DEFLECTION CHECK SUMMARY (beams only) ────────────────────────────────
+    if beam_deflections:
+        row = _section(ws, row, "SERVICEABILITY — Beam Deflection Checks (EC3, δ ≤ L/300)")
+        row = _step(ws, row, "",
+                    "δ = 5 × M_Ed × L² / (48 × E × I_y)  (equivalent UDL)  |  Limit: L/300",
+                    "Deflections based on designed section properties.", "")
+        row = _step(ws, row, "Member", "Section",
+                    "δ (mm)  |  δ_lim = L/300 (mm)  |  Span L",
+                    "Status")
+        for mid, bd in beam_deflections.items():
+            dr   = member_design.get(mid, {})
+            size = dr.get("Size", dr.get("Designation", "—"))
+            L_mm = member_analysis.get(mid, {}).get("length", 0.0) * 1000
+            d_ok = bd.get("defl_ok", True)
+            d_val  = bd.get("delta (mm)", 0.0)
+            d_lim  = bd.get("delta_lim (mm)", 0.0)
+            detail = (f"δ={_fmt(d_val,2)} mm  |  δ_lim={_fmt(d_lim,2)} mm  |  "
+                      f"L={_fmt(L_mm,0)} mm")
+            row = _step(ws, row, f"Member {mid}", size, detail,
+                        "PASS ✓" if d_ok else "FAIL ✗")
+        row = _blank(ws, row)
+
+    # ── OVERALL DESIGN CHECK SUMMARY ─────────────────────────────────────────
+    row = _section(ws, row, "OVERALL DESIGN CHECK SUMMARY")
+    row = _step(ws, row, "Member", "Type",
+                "Section  |  Governing Check",
+                "Overall Status")
+    all_frame_ok = True
+    for mid in member_design:
+        eff_type = _eff.get(mid, "—")
+        dr       = member_design[mid]
+        ar       = member_analysis.get(mid, {})
+
+        if eff_type == "Beam":
+            size  = dr.get("Size", "—")
+            util  = dr.get("Utilization (%)", 0.0)
+            ok_s  = util <= 100.0
+            # Include deflection if available
+            bd    = (beam_deflections or {}).get(mid)
+            ok_d  = bd.get("defl_ok", True) if bd else True
+            ok    = ok_s and ok_d
+            chk   = f"Utilisation {_fmt(util,1)}%"
+            if bd:
+                chk += f"  |  δ={_fmt(bd['delta (mm)'],2)} mm"
+        elif eff_type in ("Beam-Column", "Column-BeamColumn"):
+            size  = dr.get("Designation", "—")
+            U     = dr.get("utilisation", 0.0)
+            ok    = U <= 1.0
+            chk   = f"N+M Interaction U={_fmt(U,3)}"
+        else:  # Column
+            size  = dr.get("Designation", "—")
+            U     = dr.get("utilisation", 0.0)
+            ok    = U <= 1.0
+            chk   = f"Axial+M Interaction U={_fmt(U,3)}"
+
+        all_frame_ok = all_frame_ok and ok
+        row = _step(ws, row, f"Member {mid}", eff_type,
+                    f"{size}  |  {chk}",
+                    "PASS ✓" if ok else "FAIL ✗")
+
+    row = _blank(ws, row)
+    row = _result_row(ws, row,
+                      "FRAME — All members checked (ULS strength + SLS deflection for beams)",
+                      "PASS ✓" if all_frame_ok else "FAIL ✗",
+                      all_frame_ok)
 
     return _wb_bytes(wb)

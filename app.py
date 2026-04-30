@@ -53,7 +53,8 @@ def _show_section_figure(fig, header="📐 Section Visualization"):
 
 
 def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df,
-                        member_point_loads_df=None):
+                        member_point_loads_df=None,
+                        trapezoidal_loads_df=None):
     """
     Return a matplotlib Figure showing the 2-D frame geometry with:
     - Members coloured by type (Beam / Column) with mid-span length labels
@@ -63,6 +64,7 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
     - Nodal force / moment arrows
     - UDL arrow-combs along members
     - Member point load arrows at the specified position along each member
+    - Trapezoidal / triangular load arrow-combs with tapering heights
     """
     import matplotlib.patches as mpatches
     import matplotlib.patheffects as pe
@@ -353,6 +355,86 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
                     fontsize=7, color="#92400E", ha="center", zorder=9,
                     path_effects=[pe.withStroke(linewidth=2, foreground="white")])
 
+    # ── Draw trapezoidal / triangular member loads ────────────────────────
+    _TRAP_N_ARROWS = 8   # number of arrows in the comb
+    if trapezoidal_loads_df is not None:
+        for _, row in trapezoidal_loads_df.dropna(subset=["Member"]).iterrows():
+            mid    = int(row["Member"])
+            wx1    = float(row.get("wx_start (kN/m)", 0) or 0)
+            wy1    = float(row.get("wy_start (kN/m)", 0) or 0)
+            wx2    = float(row.get("wx_end (kN/m)", 0) or 0)
+            wy2    = float(row.get("wy_end (kN/m)", 0) or 0)
+
+            if mid not in member_coords:
+                continue
+            # Total resultant at start and end
+            mag1 = np.hypot(wx1, wy1)
+            mag2 = np.hypot(wx2, wy2)
+            if mag1 < 1e-9 and mag2 < 1e-9:
+                continue
+
+            x1, y1, x2, y2 = member_coords[mid]
+            along  = np.array([x2 - x1, y2 - y1])
+            L_m    = np.linalg.norm(along)
+            if L_m < 1e-9:
+                continue
+            along_u = along / L_m
+
+            # Collect arrow tip positions so we can draw the "hat" line
+            tip_xs, tip_ys = [], []
+
+            max_mag = max(mag1, mag2, 1e-9)
+            arr_max = arrow_len * 0.7   # max arrow length scaled to frame
+
+            for i in range(_TRAP_N_ARROWS + 1):
+                t  = i / _TRAP_N_ARROWS
+                bx = x1 + t * (x2 - x1)
+                by = y1 + t * (y2 - y1)
+
+                # Interpolate load vector at this position
+                wxv = wx1 + t * (wx2 - wx1)
+                wyv = wy1 + t * (wy2 - wy1)
+                mag = np.hypot(wxv, wyv)
+                if mag < 1e-9:
+                    tip_xs.append(bx)
+                    tip_ys.append(by)
+                    continue
+
+                load_dir = np.array([wxv, wyv]) / mag
+                arr_len_i = arr_max * mag / max_mag
+
+                ax.arrow(
+                    bx - load_dir[0] * arr_len_i,
+                    by - load_dir[1] * arr_len_i,
+                    load_dir[0] * arr_len_i,
+                    load_dir[1] * arr_len_i,
+                    fc="#8B5CF6", ec="#4C1D95",
+                    width=scale * 0.035,
+                    head_width=scale * 0.15,
+                    head_length=scale * 0.10,
+                    length_includes_head=True, zorder=7,
+                )
+                tip_xs.append(bx - load_dir[0] * arr_len_i)
+                tip_ys.append(by - load_dir[1] * arr_len_i)
+
+            # Draw "hat" line connecting arrow tails to outline the shape
+            ax.plot(tip_xs, tip_ys, color="#4C1D95", linewidth=1.2,
+                    linestyle="--", zorder=6)
+
+            # Label at midpoint
+            mx2, my2 = (x1 + x2) / 2, (y1 + y2) / 2
+            parts = []
+            if abs(wx1) > 1e-9 or abs(wx2) > 1e-9:
+                parts.append(f"wx: {wx1:+.1f}→{wx2:+.1f}")
+            if abs(wy1) > 1e-9 or abs(wy2) > 1e-9:
+                parts.append(f"wy: {wy1:+.1f}→{wy2:+.1f}")
+            norm_u = np.array([-along_u[1], along_u[0]])
+            offset = norm_u * scale * 0.3
+            ax.text(mx2 + offset[0], my2 + offset[1],
+                    "\n".join(parts) + " kN/m",
+                    fontsize=7, color="#4C1D95", ha="center", zorder=9,
+                    path_effects=[pe.withStroke(linewidth=2, foreground="white")])
+
     # ── Legend & labels ──────────────────────────────────────────────────
     legend_handles = [
         mpatches.Patch(color="#2563EB", label="Beam"),
@@ -360,6 +442,7 @@ def plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df
         mpatches.Patch(color="#F59E0B", label="Applied load"),
         mpatches.Patch(color="#10B981", label="Distributed load (UDL)"),
         mpatches.Patch(color="#7C3AED", label="Applied moment"),
+        mpatches.Patch(color="#8B5CF6", label="Trapezoidal / triangular load"),
     ]
     ax.legend(handles=legend_handles, loc="upper right", fontsize=8,
               framealpha=0.9, edgecolor="#CBD5E1")
@@ -1167,7 +1250,7 @@ elif task == "Simple Beam Design":
 
         try:
             if beam_type == "Restrained":
-                result = truss_analysis.restrained_beam(M, V)
+                result = truss_analysis.restrained_beam(M, V, L=L)
 
             else:
                 result = truss_analysis.unrestrained_beam(M, V, L)
@@ -1175,9 +1258,23 @@ elif task == "Simple Beam Design":
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
 
+            # Show deflection check result in the UI if available
+            if "delta (mm)" in result:
+                delta     = result["delta (mm)"]
+                delta_lim = result["delta_lim (mm)"]
+                defl_ok   = result["Deflection Check"] == "PASS ✓"
+                if defl_ok:
+                    st.success(
+                        f"✅ SLS Deflection Check: δ = {delta:.2f} mm ≤ δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+                else:
+                    st.error(
+                        f"❌ SLS Deflection Check FAIL: δ = {delta:.2f} mm > δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+
             if beam_type == "Restrained":
                 report_bytes = report_generator.restrained_beam_report(
-                    M=M, V=V,
+                    M=M, V=V, L=L,
                     grade=truss_analysis.grade,
                     result=result,
                 )
@@ -1268,7 +1365,7 @@ elif task == "Beam Analysis & Design":
 
         ltype = st.selectbox(
             f"Load {i+1} Type",
-            ["Point Load", "UDL"],
+            ["Point Load", "UDL", "Triangular Load", "Trapezoidal Load"],
             key=f"lt_new{i}"
         )
 
@@ -1278,12 +1375,39 @@ elif task == "Beam Analysis & Design":
 
             loads.append(("point", P, x))
 
-        else:
+        elif ltype == "UDL":
             w = st.number_input(f"w{i+1} (kN/m)", key=f"w_new{i}")
             a = st.number_input(f"Start (m)", key=f"a_new{i}")
             b = st.number_input(f"End (m)", key=f"b_new{i}")
 
             loads.append(("udl", w, a, b))
+
+        elif ltype == "Triangular Load":
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                w_tri = st.number_input(f"Peak intensity (kN/m)", key=f"w_tri{i}", value=10.0)
+                a_tri = st.number_input(f"Start position (m)", key=f"a_tri{i}")
+                b_tri = st.number_input(f"End position (m)",   key=f"b_tri{i}", value=float(L))
+            with col_t2:
+                direction_tri = st.selectbox(
+                    f"Peak location",
+                    ["Peak at start → zero at end", "Zero at start → peak at end"],
+                    key=f"dir_tri{i}",
+                )
+            if direction_tri == "Peak at start → zero at end":
+                loads.append(("trapezoidal", w_tri, 0.0, a_tri, b_tri))
+            else:
+                loads.append(("trapezoidal", 0.0, w_tri, a_tri, b_tri))
+
+        else:  # Trapezoidal Load
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                w_start = st.number_input(f"Intensity at start (kN/m)", key=f"ws_trap{i}", value=10.0)
+                a_trap  = st.number_input(f"Start position (m)",         key=f"a_trap{i}")
+            with col_p2:
+                w_end   = st.number_input(f"Intensity at end (kN/m)",   key=f"we_trap{i}", value=5.0)
+                b_trap  = st.number_input(f"End position (m)",           key=f"b_trap{i}", value=float(L))
+            loads.append(("trapezoidal", w_start, w_end, a_trap, b_trap))
 
     st.write("---")
 
@@ -1327,6 +1451,11 @@ elif task == "Beam Analysis & Design":
                 elif load[0] == "udl":
                     _, w, a, b = load
                     beam.add_loads(UDL(-1*w * 1000, (a, b), 90))  # kN/m → N/m
+
+                elif load[0] == "trapezoidal":
+                    _, w_s, w_e, a, b = load
+                    # TrapezoidalLoad: (w_start, w_end) in N/m; angle 90 = vertical downward
+                    beam.add_loads(TrapezoidalLoad((-w_s * 1000, -w_e * 1000), (a, b), 90))
 
             # -------------------------
             # SOLVE
@@ -1379,26 +1508,41 @@ elif task == "Beam Analysis & Design":
             # -------------------------
             # DESIGN
             # -------------------------
+            L_mm = L * 1000  # beam span in mm for design checks
             if latrestrain:
-                result = truss_analysis.restrained_beam(M, V)
+                result = truss_analysis.restrained_beam(M, V, L=L_mm)
 
             else:
                 truss_analysis.condition = condition
                 truss_analysis.endcondition = restraint
-                result = truss_analysis.unrestrained_beam(M, V, L * 1000)
+                result = truss_analysis.unrestrained_beam(M, V, L_mm)
 
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
 
+            # Show deflection check in UI
+            if "delta (mm)" in result:
+                delta     = result["delta (mm)"]
+                delta_lim = result["delta_lim (mm)"]
+                defl_ok   = result["Deflection Check"] == "PASS ✓"
+                if defl_ok:
+                    st.success(
+                        f"✅ SLS Deflection Check: δ = {delta:.2f} mm ≤ δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+                else:
+                    st.error(
+                        f"❌ SLS Deflection Check FAIL: δ = {delta:.2f} mm > δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+
             if latrestrain:
                 report_bytes = report_generator.restrained_beam_report(
-                    M=M, V=V,
+                    M=M, V=V, L=L_mm,
                     grade=truss_analysis.grade,
                     result=result,
                 )
             else:
                 report_bytes = report_generator.unrestrained_beam_report(
-                    M=M, V=V, L=L * 1000,
+                    M=M, V=V, L=L_mm,
                     grade=truss_analysis.grade,
                     condition=condition,
                     endcondition=restraint,
@@ -1908,6 +2052,35 @@ elif task == "Frame Analysis & Design":
         key="frame_member_point_loads"
     )
 
+    st.markdown("**Trapezoidal / Triangular Loads**")
+    st.caption(
+        "Linearly varying distributed load along the full length of a member. "
+        "Specify global load intensity (kN/m) at the **start node** and **end node** separately — "
+        "set one end to **0** for a triangular load. "
+        "wy is vertical (+ve = upward). "
+        "Multiple rows with the same Member ID are accumulated automatically."
+    )
+    _default_trap_loads = pd.DataFrame({
+        "Member":           pd.array([], dtype="Int64"),
+        "wx_start (kN/m)":  pd.array([], dtype="float64"),
+        "wy_start (kN/m)":  pd.array([], dtype="float64"),
+        "wx_end (kN/m)":    pd.array([], dtype="float64"),
+        "wy_end (kN/m)":    pd.array([], dtype="float64"),
+    })
+    trapezoidal_loads_df = st.data_editor(
+        _default_trap_loads,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Member":          st.column_config.NumberColumn("Member ID", min_value=1, step=1, format="%d"),
+            "wx_start (kN/m)": st.column_config.NumberColumn("wx  start (kN/m)", format="%.2f"),
+            "wy_start (kN/m)": st.column_config.NumberColumn("wy  start (kN/m)", format="%.2f"),
+            "wx_end (kN/m)":   st.column_config.NumberColumn("wx  end  (kN/m)", format="%.2f"),
+            "wy_end (kN/m)":   st.column_config.NumberColumn("wy  end  (kN/m)", format="%.2f"),
+        },
+        key="frame_trapezoidal_loads"
+    )
+
     st.write("---")
 
     # ── Optional frame geometry preview ───────────────────────────────────
@@ -1917,7 +2090,8 @@ elif task == "Frame Analysis & Design":
     if show_vis:
         with st.spinner("Rendering frame…"):
             vis_fig = plot_frame_geometry(nodes_df, members_df, supports_df, node_loads_df, udl_df,
-                                          member_point_loads_df)
+                                          member_point_loads_df,
+                                          trapezoidal_loads_df)
         if vis_fig is not None:
             st.subheader("🖼 Frame Geometry Preview")
             st.pyplot(vis_fig, use_container_width=True)
@@ -1938,6 +2112,7 @@ elif task == "Frame Analysis & Design":
             node_loads_list = node_loads_df.dropna(subset=["Node"]).values.tolist()
             udl_list        = udl_df.dropna(subset=["Member"]).values.tolist()
             mpl_list        = member_point_loads_df.dropna(subset=["Member"]).values.tolist()
+            trap_list       = trapezoidal_loads_df.dropna(subset=["Member"]).values.tolist()
 
             if len(nodes_list) < 2:
                 st.error("Please define at least 2 nodes.")
@@ -1957,6 +2132,7 @@ elif task == "Frame Analysis & Design":
                 node_loads=node_loads_list,
                 udl_loads=udl_list,
                 member_point_loads=mpl_list if mpl_list else None,
+                trapezoidal_loads=trap_list if trap_list else None,
                 E=_fa_E,
                 I_beam=_fa_I_beam,
                 A_beam=_fa_A_beam,
@@ -2016,7 +2192,7 @@ elif task == "Frame Analysis & Design":
                     elif res["type"] == "Beam":
                         member_effective_types[mid] = "Beam"
                         if beam_condition == "Restrained":
-                            dr = truss_analysis.restrained_beam(M_kNm, V_kN)
+                            dr = truss_analysis.restrained_beam(M_kNm, V_kN, L=L_mm)
                         else:
                             truss_analysis.endcondition = unrestrained_end
                             dr = truss_analysis.unrestrained_beam(M_kNm, V_kN, L_mm)
@@ -2049,18 +2225,33 @@ elif task == "Frame Analysis & Design":
                     design_errors[mid] = str(exc)
                     member_effective_types.setdefault(mid, res["type"])
 
+            # ── Collect beam deflections from design results ──────────────────
+            # restrained_beam / unrestrained_beam already embed the deflection
+            # check when L is provided.  Gather them here for the report.
+            frame_beam_deflections = {}
+            for mid, dr in member_design.items():
+                eff_type = member_effective_types.get(mid, "")
+                if eff_type == "Beam" and "delta (mm)" in dr:
+                    frame_beam_deflections[mid] = {
+                        "delta (mm)":     dr["delta (mm)"],
+                        "delta_lim (mm)": dr["delta_lim (mm)"],
+                        "defl_ok":        dr.get("Deflection Check") == "PASS ✓",
+                    }
+
             # ── Store everything in session state so it survives re-runs
             st.session_state["frame_results"] = {
                 "member_results": member_results,
                 "member_design":  member_design,
                 "design_errors":  design_errors,
                 "member_effective_types": member_effective_types,
+                "frame_beam_deflections": frame_beam_deflections,
                 "nodes_list":     nodes_list,
                 "members_list":   members_list,
                 "supports_list":  supports_list,
                 "node_loads_list": node_loads_list,
                 "udl_list":       udl_list,
                 "mpl_list":       mpl_list,
+                "trap_list":      trap_list,
                 "grade":          truss_analysis.grade,
                 "beam_condition": beam_condition,
                 "col_condition":  truss_analysis.condition,
@@ -2079,12 +2270,14 @@ elif task == "Frame Analysis & Design":
         member_design  = fr["member_design"]
         design_errors  = fr["design_errors"]
         member_effective_types = fr.get("member_effective_types", {})
+        frame_beam_deflections = fr.get("frame_beam_deflections", {})
         nodes_list     = fr["nodes_list"]
         members_list   = fr["members_list"]
         supports_list  = fr["supports_list"]
         node_loads_list = fr["node_loads_list"]
         udl_list       = fr["udl_list"]
         mpl_list       = fr.get("mpl_list", [])
+        trap_list      = fr.get("trap_list", [])
         _grade         = fr["grade"]
         _beam_cond     = fr["beam_condition"]
         _col_cond      = fr["col_condition"]
@@ -2152,6 +2345,13 @@ elif task == "Frame Analysis & Design":
                         "Utilisation (%)": round(util, 1),
                         "Status": "PASS ✓" if ok else "FAIL ✗",
                     }
+                    # Deflection check columns
+                    bd = frame_beam_deflections.get(mid)
+                    if bd:
+                        row_d["δ (mm)"]     = bd["delta (mm)"]
+                        row_d["δ_lim (mm)"] = bd["delta_lim (mm)"]
+                        row_d["Defl. Check"] = "PASS ✓" if bd["defl_ok"] else "FAIL ✗"
+                        ok = ok and bd["defl_ok"]
                     util_str = f"{util:.1f}%"
 
                 elif eff_type == "Beam-Column":
@@ -2279,6 +2479,8 @@ elif task == "Frame Analysis & Design":
                 node_loads=node_loads_list,
                 udl_loads=udl_list,
                 member_point_loads=mpl_list if mpl_list else None,
+                trapezoidal_loads=trap_list if trap_list else None,
+                beam_deflections=frame_beam_deflections if frame_beam_deflections else None,
             )
             st.download_button(
                 label="📥 Download Results Sheet",
