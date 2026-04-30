@@ -616,7 +616,29 @@ def run_analysis_and_design_table(joints_file, members_file):
 
     return tension_table, compression_table
 
-def restrained_beam(M, V):
+def get_beam_Iy(size):
+    """Return Iy (mm⁴) for the given UB section designation, or None if not found."""
+    try:
+        ex = openpyxl.load_workbook("UB-2.xlsx").active
+        for i in range(2, ex.max_row + 1):
+            if ex.cell(row=i, column=1).value == size:
+                return float(ex.cell(row=i, column=2).value) * 10000  # cm⁴ → mm⁴
+    except Exception:
+        pass
+    return None
+
+
+def restrained_beam(M, V, L=None):
+    """
+    Design a restrained beam to EC3.
+
+    M  – design bending moment (kNm)
+    V  – design shear force (kN)
+    L  – beam span (mm), optional.  When provided the SLS deflection check
+         δ ≤ L/300 is performed and enforced; sections that pass strength but
+         fail deflection are skipped so that the returned section satisfies both
+         ULS and SLS requirements.
+    """
     global grade
 
     grades = openpyxl.load_workbook("grades.xlsx").active
@@ -628,6 +650,7 @@ def restrained_beam(M, V):
             break
 
     gamma_M0 = 1.0
+    E_steel = 210000.0  # N/mm²
 
     ex = openpyxl.load_workbook("UB-2.xlsx").active
 
@@ -648,6 +671,7 @@ def restrained_beam(M, V):
         else:
             axis = "z"
         Wpl = max(Wyy, Wzz)
+        Iy  = float(ex.cell(row=i, column=2).value) * 10000  # cm⁴ → mm⁴
         tw = float(ex.cell(row=i, column=15).value)           # web thickness
         h = float(ex.cell(row=i, column=16).value)            # depth
         tf = float(ex.cell(row=i, column=17).value)
@@ -675,15 +699,38 @@ def restrained_beam(M, V):
                 (Wpl - (rho * Aw**2) / (4 * tw)) * fy / gamma_M0
             ) / 1e6  # kNm
 
-        # ---- FINAL CHECK ----
-        if M <= M_Rd:
+        # ---- ULS MOMENT CHECK ----
+        if M > M_Rd:
+            continue
+
+        # ---- SLS DEFLECTION CHECK (EC3, δ ≤ L/300) ----
+        # Estimate mid-span deflection for a simply-supported beam under
+        # equivalent UDL: δ = 5ML²/(48EI)  [M in N·mm, L in mm, E in N/mm², I in mm⁴]
+        if L is not None:
+            M_Nmm  = M * 1e6           # kNm → N·mm
+            delta  = 5.0 * M_Nmm * L ** 2 / (48.0 * E_steel * Iy)   # mm
+            delta_lim = L / 300.0      # mm  (EC3 serviceability limit)
+            if delta > delta_lim:
+                continue               # fails deflection → try next (larger) section
+
             return {
                 "Type": "Restrained Beam",
                 "Size": size,
-                "M_Rd (kNm)": round(M_Rd, 2),
-                "V_Rd (kN)": round(Vpl_Rd, 2),
-                "Utilization (%)": round((M / M_Rd) * 100, 2)
+                "M_Rd (kNm)":         round(M_Rd, 2),
+                "V_Rd (kN)":          round(Vpl_Rd, 2),
+                "Utilization (%)":    round((M / M_Rd) * 100, 2),
+                "delta (mm)":         round(delta, 2),
+                "delta_lim (mm)":     round(delta_lim, 2),
+                "Deflection Check":   "PASS ✓",
             }
+
+        return {
+            "Type": "Restrained Beam",
+            "Size": size,
+            "M_Rd (kNm)":      round(M_Rd, 2),
+            "V_Rd (kN)":       round(Vpl_Rd, 2),
+            "Utilization (%)": round((M / M_Rd) * 100, 2),
+        }
 
 def unrestrained_beam(M, V, L):
     global condition, endcondition, grade
@@ -797,16 +844,31 @@ def unrestrained_beam(M, V, L):
         # Note: Divide by 10^6 if W is mm3 and fy is MPa to get kNm
         Mbrd = (chi * W_reduced * fy / gamma_M1) / 1e6
 
-        # ---- FINAL CHECK ----
-        if M <= Mbrd:
-            return {
-                "Type": "Unrestrained Beam",
-                "Size": size,
-                "x_LT": round(chi, 3),
-                "Mb_Rd (kNm)": round(Mbrd, 2),
-                "Vpl_Rd": round(Vpl_Rd, 2),
-                "Utilization (%)": round((M / Mbrd) * 100, 2)
-            }
+        # ---- ULS MOMENT CHECK ----
+        if M > Mbrd:
+            continue
+
+        # ---- SLS DEFLECTION CHECK (EC3, δ ≤ L/300) ----
+        # Mid-span deflection estimate under equivalent UDL:
+        # δ = 5ML²/(48EI)  [M in N·mm, L in mm, E in N/mm², I in mm⁴]
+        E_steel = 210000.0  # N/mm²
+        M_Nmm   = M * 1e6           # kNm → N·mm
+        delta   = 5.0 * M_Nmm * L ** 2 / (48.0 * E_steel * Iy)   # mm
+        delta_lim = L / 300.0       # mm  (EC3 serviceability limit)
+        if delta > delta_lim:
+            continue                # fails deflection → try next (larger) section
+
+        return {
+            "Type": "Unrestrained Beam",
+            "Size": size,
+            "x_LT": round(chi, 3),
+            "Mb_Rd (kNm)":       round(Mbrd, 2),
+            "Vpl_Rd":            round(Vpl_Rd, 2),
+            "Utilization (%)":   round((M / Mbrd) * 100, 2),
+            "delta (mm)":        round(delta, 2),
+            "delta_lim (mm)":    round(delta_lim, 2),
+            "Deflection Check":  "PASS ✓",
+        }
 
         # # ---- SHEAR REDUCTION ----
         # if V / Vpl_Rd <= 0.5:

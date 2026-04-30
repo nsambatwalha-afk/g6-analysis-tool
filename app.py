@@ -1167,7 +1167,7 @@ elif task == "Simple Beam Design":
 
         try:
             if beam_type == "Restrained":
-                result = truss_analysis.restrained_beam(M, V)
+                result = truss_analysis.restrained_beam(M, V, L=L)
 
             else:
                 result = truss_analysis.unrestrained_beam(M, V, L)
@@ -1175,9 +1175,23 @@ elif task == "Simple Beam Design":
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
 
+            # Show deflection check result in the UI if available
+            if "delta (mm)" in result:
+                delta     = result["delta (mm)"]
+                delta_lim = result["delta_lim (mm)"]
+                defl_ok   = result["Deflection Check"] == "PASS ✓"
+                if defl_ok:
+                    st.success(
+                        f"✅ SLS Deflection Check: δ = {delta:.2f} mm ≤ δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+                else:
+                    st.error(
+                        f"❌ SLS Deflection Check FAIL: δ = {delta:.2f} mm > δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+
             if beam_type == "Restrained":
                 report_bytes = report_generator.restrained_beam_report(
-                    M=M, V=V,
+                    M=M, V=V, L=L,
                     grade=truss_analysis.grade,
                     result=result,
                 )
@@ -1379,26 +1393,41 @@ elif task == "Beam Analysis & Design":
             # -------------------------
             # DESIGN
             # -------------------------
+            L_mm = L * 1000  # beam span in mm for design checks
             if latrestrain:
-                result = truss_analysis.restrained_beam(M, V)
+                result = truss_analysis.restrained_beam(M, V, L=L_mm)
 
             else:
                 truss_analysis.condition = condition
                 truss_analysis.endcondition = restraint
-                result = truss_analysis.unrestrained_beam(M, V, L * 1000)
+                result = truss_analysis.unrestrained_beam(M, V, L_mm)
 
             st.success("Design Result")
             st.dataframe(pd.DataFrame([result]))
 
+            # Show deflection check in UI
+            if "delta (mm)" in result:
+                delta     = result["delta (mm)"]
+                delta_lim = result["delta_lim (mm)"]
+                defl_ok   = result["Deflection Check"] == "PASS ✓"
+                if defl_ok:
+                    st.success(
+                        f"✅ SLS Deflection Check: δ = {delta:.2f} mm ≤ δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+                else:
+                    st.error(
+                        f"❌ SLS Deflection Check FAIL: δ = {delta:.2f} mm > δ_lim = {delta_lim:.2f} mm  (L/300)"
+                    )
+
             if latrestrain:
                 report_bytes = report_generator.restrained_beam_report(
-                    M=M, V=V,
+                    M=M, V=V, L=L_mm,
                     grade=truss_analysis.grade,
                     result=result,
                 )
             else:
                 report_bytes = report_generator.unrestrained_beam_report(
-                    M=M, V=V, L=L * 1000,
+                    M=M, V=V, L=L_mm,
                     grade=truss_analysis.grade,
                     condition=condition,
                     endcondition=restraint,
@@ -2016,7 +2045,7 @@ elif task == "Frame Analysis & Design":
                     elif res["type"] == "Beam":
                         member_effective_types[mid] = "Beam"
                         if beam_condition == "Restrained":
-                            dr = truss_analysis.restrained_beam(M_kNm, V_kN)
+                            dr = truss_analysis.restrained_beam(M_kNm, V_kN, L=L_mm)
                         else:
                             truss_analysis.endcondition = unrestrained_end
                             dr = truss_analysis.unrestrained_beam(M_kNm, V_kN, L_mm)
@@ -2049,12 +2078,26 @@ elif task == "Frame Analysis & Design":
                     design_errors[mid] = str(exc)
                     member_effective_types.setdefault(mid, res["type"])
 
+            # ── Collect beam deflections from design results ──────────────────
+            # restrained_beam / unrestrained_beam already embed the deflection
+            # check when L is provided.  Gather them here for the report.
+            frame_beam_deflections = {}
+            for mid, dr in member_design.items():
+                eff_type = member_effective_types.get(mid, "")
+                if eff_type == "Beam" and "delta (mm)" in dr:
+                    frame_beam_deflections[mid] = {
+                        "delta (mm)":     dr["delta (mm)"],
+                        "delta_lim (mm)": dr["delta_lim (mm)"],
+                        "defl_ok":        dr.get("Deflection Check") == "PASS ✓",
+                    }
+
             # ── Store everything in session state so it survives re-runs
             st.session_state["frame_results"] = {
                 "member_results": member_results,
                 "member_design":  member_design,
                 "design_errors":  design_errors,
                 "member_effective_types": member_effective_types,
+                "frame_beam_deflections": frame_beam_deflections,
                 "nodes_list":     nodes_list,
                 "members_list":   members_list,
                 "supports_list":  supports_list,
@@ -2079,6 +2122,7 @@ elif task == "Frame Analysis & Design":
         member_design  = fr["member_design"]
         design_errors  = fr["design_errors"]
         member_effective_types = fr.get("member_effective_types", {})
+        frame_beam_deflections = fr.get("frame_beam_deflections", {})
         nodes_list     = fr["nodes_list"]
         members_list   = fr["members_list"]
         supports_list  = fr["supports_list"]
@@ -2152,6 +2196,13 @@ elif task == "Frame Analysis & Design":
                         "Utilisation (%)": round(util, 1),
                         "Status": "PASS ✓" if ok else "FAIL ✗",
                     }
+                    # Deflection check columns
+                    bd = frame_beam_deflections.get(mid)
+                    if bd:
+                        row_d["δ (mm)"]     = bd["delta (mm)"]
+                        row_d["δ_lim (mm)"] = bd["delta_lim (mm)"]
+                        row_d["Defl. Check"] = "PASS ✓" if bd["defl_ok"] else "FAIL ✗"
+                        ok = ok and bd["defl_ok"]
                     util_str = f"{util:.1f}%"
 
                 elif eff_type == "Beam-Column":
@@ -2279,6 +2330,7 @@ elif task == "Frame Analysis & Design":
                 node_loads=node_loads_list,
                 udl_loads=udl_list,
                 member_point_loads=mpl_list if mpl_list else None,
+                beam_deflections=frame_beam_deflections if frame_beam_deflections else None,
             )
             st.download_button(
                 label="📥 Download Results Sheet",
