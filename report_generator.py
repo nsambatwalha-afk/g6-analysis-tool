@@ -1390,6 +1390,7 @@ def frame_design_report(
     node_loads=None,
     udl_loads=None,
     member_point_loads=None,
+    trapezoidal_loads=None,   # list of [mid, wx_start, wy_start, wx_end, wy_end]
     beam_deflections: dict = None,  # {mid: {"delta (mm)":..., "delta_lim (mm)":..., "defl_ok":...}}
 ) -> io.BytesIO:
     """
@@ -1480,6 +1481,22 @@ def frame_design_report(
                             _fmt(float(pl[1]), 3),
                             _fmt(float(pl[2]), 3),
                             _fmt(float(pl[3]), 3))
+        row = _blank(ws, row)
+
+    if trapezoidal_loads:
+        row = _section(ws, row, "APPLIED LOADS — Trapezoidal / Triangular Loads")
+        row = _step(ws, row, "Member",
+                    "wx_start / wx_end  (kN/m)",
+                    "wy_start / wy_end  (kN/m)", "")
+        for tl in trapezoidal_loads:
+            if any(abs(float(v)) > 1e-12 for v in tl[1:]):
+                load_type = "Triangular" if (
+                    abs(float(tl[1])) < 1e-9 or abs(float(tl[3])) < 1e-9 or
+                    abs(float(tl[2])) < 1e-9 or abs(float(tl[4])) < 1e-9
+                ) else "Trapezoidal"
+                wx_str = f"{_fmt(float(tl[1]), 3)} → {_fmt(float(tl[3]), 3)}"
+                wy_str = f"{_fmt(float(tl[2]), 3)} → {_fmt(float(tl[4]), 3)}"
+                row = _step(ws, row, str(int(tl[0])), wx_str, wy_str, load_type)
         row = _blank(ws, row)
 
     # ── ANALYSIS METHOD ────────────────────────────────────────────────────
