@@ -578,12 +578,13 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict,
             "in the working directory."
         )
     size = result["Size"]
-    Wpl = Av = Aw = tw = h = tf = None
+    Wpl = Av = Aw = tw = h = tf = Iy = None
     for i in range(2, ex.max_row + 1):
         if ex.cell(row=i, column=1).value == size:
             Wyy = float(ex.cell(row=i, column=8).value) * 1000
             Wzz = float(ex.cell(row=i, column=9).value) * 1000
             Wpl = max(Wyy, Wzz)
+            Iy  = float(ex.cell(row=i, column=2).value) * 10000  # cm⁴ → mm⁴
             tw  = float(ex.cell(row=i, column=15).value)
             h   = float(ex.cell(row=i, column=16).value)
             tf  = float(ex.cell(row=i, column=17).value)
@@ -704,13 +705,19 @@ def restrained_beam_report(M: float, V: float, grade: str, result: dict,
                     "Mid-span deflection (equivalent UDL assumption)",
                     "δ = 5 × M_Ed × L² / (48 × E × I_y)  [mm]",
                     "")
+        if Iy is not None:
+            row = _step(ws, row, "",
+                        "Section second moment of area",
+                        f"I_y = {_fmt(Iy / 1e4, 0)} cm⁴ = {_fmt(Iy, 0)} mm⁴",
+                        "")
         row = _step(ws, row, "",
                     "Deflection limit (EC3)",
                     "δ_lim = L / 300",
                     f"δ_lim = {_fmt(L)}/300 = {_fmt(delta_lim, 2)} mm")
+        Iy_show = _fmt(Iy, 0) if Iy is not None else "I_y"
         row = _step(ws, row, "",
                     "Substitution",
-                    f"δ = 5 × {_fmt(M * 1e6, 1)} × {_fmt(L)}² / (48 × 210000 × I_y)",
+                    f"δ = 5 × {_fmt(M * 1e6, 1)} × {_fmt(L)}² / (48 × 210000 × {Iy_show})",
                     f"δ = {_fmt(delta, 2)} mm")
         row = _step(ws, row, "",
                     "Check: δ ≤ δ_lim",
@@ -1016,13 +1023,19 @@ def unrestrained_beam_report(
                     "Mid-span deflection (equivalent UDL assumption)",
                     "δ = 5 × M_Ed × L² / (48 × E × I_y)  [mm]",
                     "")
+        if Iy_mm4:
+            row = _step(ws, row, "",
+                        "Section second moment of area",
+                        f"I_y = {_fmt(Iy_mm4 / 1e4, 0)} cm⁴ = {_fmt(Iy_mm4, 0)} mm⁴",
+                        "")
         row = _step(ws, row, "",
                     "Deflection limit (EC3)",
                     "δ_lim = L / 300",
                     f"δ_lim = {_fmt(L)}/300 = {_fmt(delta_lim, 2)} mm")
+        Iy_show = _fmt(Iy_mm4, 0) if Iy_mm4 else "I_y"
         row = _step(ws, row, "",
                     "Substitution",
-                    f"δ = 5 × {_fmt(M * 1e6, 1)} × {_fmt(L)}² / (48 × 210000 × I_y)",
+                    f"δ = 5 × {_fmt(M * 1e6, 1)} × {_fmt(L)}² / (48 × 210000 × {Iy_show})",
                     f"δ = {_fmt(delta, 2)} mm")
         row = _step(ws, row, "",
                     "Check: δ ≤ δ_lim",
