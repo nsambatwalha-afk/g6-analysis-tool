@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import inspect
 import libfunc
 import truss_analysis
 import report_generator
@@ -2125,20 +2126,37 @@ elif task == "Frame Analysis & Design":
                 st.stop()
 
             # ── Run FEA ─────────────────────────────────────────────────
-            member_results, node_disp = fa.analyse_frame(
-                nodes=nodes_list,
-                members=members_list,
-                supports=supports_list,
-                node_loads=node_loads_list,
-                udl_loads=udl_list,
-                member_point_loads=mpl_list if mpl_list else None,
-                trapezoidal_loads=trap_list if trap_list else None,
-                E=_fa_E,
-                I_beam=_fa_I_beam,
-                A_beam=_fa_A_beam,
-                I_col=_fa_I_col,
-                A_col=_fa_A_col,
-            )
+            frame_kwargs = {
+                "nodes": nodes_list,
+                "members": members_list,
+                "supports": supports_list,
+                "node_loads": node_loads_list,
+                "udl_loads": udl_list,
+                "member_point_loads": mpl_list if mpl_list else None,
+                "E": _fa_E,
+                "I_beam": _fa_I_beam,
+                "A_beam": _fa_A_beam,
+                "I_col": _fa_I_col,
+                "A_col": _fa_A_col,
+            }
+
+            # Backward compatibility: only pass trapezoidal loads when the
+            # loaded frame solver exposes this keyword.
+            try:
+                _fa_sig = inspect.signature(fa.analyse_frame)
+                _supports_trap = "trapezoidal_loads" in _fa_sig.parameters
+            except Exception:
+                _supports_trap = False
+
+            if _supports_trap:
+                frame_kwargs["trapezoidal_loads"] = trap_list if trap_list else None
+            elif trap_list:
+                st.warning(
+                    "The loaded frame analysis backend does not support trapezoidal loads. "
+                    "These loads were ignored for this run."
+                )
+
+            member_results, node_disp = fa.analyse_frame(**frame_kwargs)
 
             # ── Set globals required by truss_analysis functions ─────────
             truss_analysis.endcondition = col_endcondition
